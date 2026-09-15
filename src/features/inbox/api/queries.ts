@@ -1,5 +1,22 @@
-'use client';
-
+/**
+ * Deliberately NOT `'use client'`. These are plain `queryOptions()` /
+ * `mutationOptions()` factories — no hooks, no browser APIs — so they
+ * must stay callable from both worlds: directly, in-process, from a
+ * Server Component doing `queryClient.prefetchQuery(conversationsOptions(id))`
+ * (see src/app/dashboard/inbox/page.tsx), and from Client Components via
+ * `useQuery`/`useMutation`. A `'use client'` directive here would turn
+ * every export — `conversationsOptions` included — into an opaque
+ * client reference wherever this module is imported, which a Server
+ * Component can render as JSX but never call as a function. That
+ * mismatch is exactly what produced the production 500 on
+ * /dashboard/inbox ("Attempted to call conversationsOptions() from the
+ * server but conversationsOptions is on the client"): `next build`
+ * doesn't render this route (it's fully dynamic), so the break only
+ * surfaced on a real, authenticated request. Both sides share this same
+ * file and its `inboxKeys` factory, so the query keys used for
+ * server-side prefetching and client-side hydration are always
+ * identical — never re-derive them separately.
+ */
 import { mutationOptions, queryOptions } from '@tanstack/react-query';
 import { getQueryClient } from '@/lib/query-client';
 import {
