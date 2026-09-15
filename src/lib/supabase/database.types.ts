@@ -2,17 +2,22 @@
  * Hand-written row types mirroring the shared Supabase schema (the same
  * project and tables ChatbotDemo's `supabase/migrations/*.sql` define —
  * see that repo's `lib/supabase/database.types.ts`, which this file is
- * ported from). ai-receptionist-platform does not own this schema and
- * must not add columns/tables here that don't exist in those
- * migrations yet.
+ * ported from). ai-receptionist-platform does not own most of this
+ * schema and must not add columns/tables here that don't exist in a
+ * real migration.
+ *
+ * The one exception: `profiles.onboarding_completed` /
+ * `onboarding_completed_at`, added by this repo's own additive
+ * migration (supabase/migrations/20260915000100_platform_onboarding.sql,
+ * not yet applied — see that file's header for why it's safe).
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
  * schema generic — that generic's conditional-type resolution is fragile
  * across supabase-js versions and buys little for a project this size.
  *
- * Keep this in sync with ChatbotDemo's migrations whenever the shared
- * schema changes.
+ * Keep this in sync with ChatbotDemo's migrations (and this repo's own
+ * additive ones) whenever the shared schema changes.
  */
 
 export type ConversationChannel = 'website' | 'instagram' | 'whatsapp';
@@ -26,6 +31,9 @@ export type WidgetPosition = 'bottom-right' | 'bottom-left';
 export interface ProfileRow {
   id: string;
   display_name: string | null;
+  /** Set once the owner completes /onboarding — see supabase/migrations/20260915000100_platform_onboarding.sql. */
+  onboarding_completed: boolean;
+  onboarding_completed_at: string | null;
   created_at: string;
   updated_at: string;
 }

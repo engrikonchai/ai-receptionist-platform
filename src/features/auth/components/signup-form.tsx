@@ -10,7 +10,6 @@ import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { getSiteUrl } from '@/lib/site-url';
-import { DEFAULT_REDIRECT_PATH } from '@/lib/safe-redirect';
 import { signupSchema } from '../schemas/auth';
 import { SupabaseConfigNotice } from './supabase-config-notice';
 
@@ -36,9 +35,11 @@ export function SignupForm() {
         options: {
           data: { display_name: value.displayName },
           // Absolute URL Supabase embeds in the confirmation email — the
-          // callback route below exchanges its `code` for a session and
-          // lands the owner on the dashboard.
-          emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(DEFAULT_REDIRECT_PATH)}`
+          // callback route exchanges its `code` for a session and lands
+          // the new owner on /onboarding (a brand-new profile always has
+          // onboarding_completed = false, so this saves the extra hop
+          // dashboard/layout.tsx's own redirect would otherwise add).
+          emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent('/onboarding')}`
         }
       });
 
@@ -58,7 +59,10 @@ export function SignupForm() {
           .from('profiles')
           .update({ display_name: value.displayName })
           .eq('id', data.user.id);
-        router.push('/dashboard/overview');
+        // A brand-new profile always has onboarding_completed = false —
+        // send them straight there rather than through the dashboard's
+        // own redirect.
+        router.push('/onboarding');
         router.refresh();
         return;
       }

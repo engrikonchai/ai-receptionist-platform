@@ -34,6 +34,11 @@ export function SelectField({
         name={field.name}
         value={field.state.value}
         onValueChange={(value) => field.handleChange(value ?? '')}
+        // Lets <SelectValue> resolve the selected option's label
+        // immediately (e.g. a pre-filled default value) instead of only
+        // after the popup has been opened once and registered its
+        // <SelectItem>s.
+        items={options}
       >
         <SelectTrigger
           id={field.name}
