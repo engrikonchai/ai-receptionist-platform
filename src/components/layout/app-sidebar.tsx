@@ -22,10 +22,21 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import * as React from 'react';
 import { Icons } from '@/components/icons';
-import { MockBusinessSwitcher } from '@/components/layout/mock-business-switcher';
-import { MockOwnerMenu } from '@/components/layout/mock-owner-menu';
+import { BusinessSwitcher } from '@/components/layout/business-switcher';
+import { OwnerMenu } from '@/components/layout/owner-menu';
+import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
 
-export default function AppSidebar() {
+export default function AppSidebar({
+  ownerEmail,
+  profile,
+  businesses,
+  initialActiveBusinessId
+}: {
+  ownerEmail: string;
+  profile: ProfileRow | null;
+  businesses: BusinessRow[];
+  initialActiveBusinessId: string | null;
+}) {
   const pathname = usePathname();
   const { isOpen } = useMediaQuery();
   const filteredGroups = useFilteredNavGroups(navGroups);
@@ -37,7 +48,10 @@ export default function AppSidebar() {
   return (
     <Sidebar collapsible='icon'>
       <SidebarHeader>
-        <MockBusinessSwitcher />
+        <BusinessSwitcher
+          businesses={businesses}
+          initialActiveBusinessId={initialActiveBusinessId}
+        />
       </SidebarHeader>
       <SidebarContent className='overflow-x-hidden'>
         {filteredGroups.map((group) => (
@@ -98,7 +112,7 @@ export default function AppSidebar() {
         ))}
       </SidebarContent>
       <SidebarFooter>
-        <MockOwnerMenu />
+        <OwnerMenu email={ownerEmail} profile={profile} />
       </SidebarFooter>
       <SidebarRail />
     </Sidebar>
