@@ -10,6 +10,7 @@ import {
   reopenConversation,
   resolveConversation,
   returnToAIConversation,
+  sendHumanReply,
   takeOverConversation
 } from './service';
 
@@ -212,15 +213,34 @@ describe('fetchConversationMessages', () => {
     expect(from).toHaveBeenCalledTimes(1);
   });
 
-  it('returns the ordered messages for a conversation that does belong to the business', async () => {
+  it('returns the ordered messages for a conversation that does belong to the business, resolving sender_type', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null })) // ownership check
       .mockReturnValueOnce(
         chainable({
           data: [
-            { id: 'm1', role: 'user', content: 'Hi', created_at: '2026-01-01T00:00:00Z' },
-            { id: 'm2', role: 'assistant', content: 'Hello!', created_at: '2026-01-01T00:01:00Z' }
+            {
+              id: 'm1',
+              role: 'user',
+              content: 'Hi',
+              sender_type: null,
+              created_at: '2026-01-01T00:00:00Z'
+            },
+            {
+              id: 'm2',
+              role: 'assistant',
+              content: 'Hello! (AI, pre-migration row)',
+              sender_type: null,
+              created_at: '2026-01-01T00:01:00Z'
+            },
+            {
+              id: 'm3',
+              role: 'assistant',
+              content: 'Hi, this is the owner.',
+              sender_type: 'human',
+              created_at: '2026-01-01T00:02:00Z'
+            }
           ],
           error: null
         })
@@ -232,8 +252,29 @@ describe('fetchConversationMessages', () => {
     expect(result).toEqual({
       status: 'ok',
       messages: [
-        { id: 'm1', role: 'user', content: 'Hi', createdAt: '2026-01-01T00:00:00Z' },
-        { id: 'm2', role: 'assistant', content: 'Hello!', createdAt: '2026-01-01T00:01:00Z' }
+        {
+          id: 'm1',
+          role: 'user',
+          content: 'Hi',
+          senderType: null,
+          createdAt: '2026-01-01T00:00:00Z'
+        },
+        {
+          id: 'm2',
+          role: 'assistant',
+          content: 'Hello! (AI, pre-migration row)',
+          // Backward compatibility: a null sender_type on an assistant
+          // row must always resolve to 'ai', never leak as null.
+          senderType: 'ai',
+          createdAt: '2026-01-01T00:01:00Z'
+        },
+        {
+          id: 'm3',
+          role: 'assistant',
+          content: 'Hi, this is the owner.',
+          senderType: 'human',
+          createdAt: '2026-01-01T00:02:00Z'
+        }
       ]
     });
   });
@@ -390,5 +431,281 @@ describe('conversation actions (take over / return to AI / resolve / reopen)', (
     mockVerifiedBusiness(from);
 
     await expect(reopenConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+  });
+});
+
+describe('sendHumanReply', () => {
+  const CONVERSATION_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa6';
+  const CLIENT_MESSAGE_ID = '3fa85f64-5717-4562-b3fc-2c963f66afa7';
+
+  const validInput = {
+    businessId: 'biz-1',
+    conversationId: CONVERSATION_ID,
+    clientMessageId: CLIENT_MESSAGE_ID,
+    content: 'Hi, this is the owner replying.'
+  };
+
+  it('rejects an unauthenticated send — never queries anything', async () => {
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: false,
+      error: SESSION_EXPIRED_MESSAGE
+    });
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({ success: false, error: SESSION_EXPIRED_MESSAGE });
+  });
+
+  it('always verifies the exact business id it was given — a client-supplied business_id can never control authorization on its own', async () => {
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: false,
+      error: 'We couldn’t find that business, or you don’t have access to it.'
+    });
+
+    await sendHumanReply({ ...validInput, businessId: 'someone-elses-business' });
+
+    expect(verifyActiveBusiness).toHaveBeenCalledWith('someone-elses-business');
+    expect(verifyActiveBusiness).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports the conversation as unavailable instead of leaking data when it belongs to another business', async () => {
+    // `.eq('business_id', verifiedId).eq('id', conversationId)` finds no
+    // row — exactly what happens whether the id was deleted or belongs
+    // to a business other than the one verified.
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null, error: null }));
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({ success: false, error: 'This conversation is no longer available.' });
+    // Never attempts an insert for a conversation it couldn't verify.
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a blank message before ever touching the database', async () => {
+    const from = vi.fn();
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply({ ...validInput, content: '   ' });
+
+    expect(result).toEqual({ success: false, error: 'Enter a message before sending.' });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('rejects a message over 4000 characters before ever touching the database', async () => {
+    const from = vi.fn();
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply({ ...validInput, content: 'a'.repeat(4001) });
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Keep replies under 4000 characters.'
+    });
+    expect(from).not.toHaveBeenCalled();
+  });
+
+  it('accepts a message at exactly the 4000 character limit', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(
+        chainable({
+          data: { id: CONVERSATION_ID, status: 'open', human_takeover: true },
+          error: null
+        })
+      )
+      .mockReturnValueOnce(
+        chainable({
+          data: {
+            id: 'm-new',
+            role: 'assistant',
+            content: 'a'.repeat(4000),
+            sender_type: 'human',
+            created_at: '2026-01-01T00:00:00Z'
+          },
+          error: null
+        })
+      );
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply({ ...validInput, content: 'a'.repeat(4000) });
+
+    expect(result.success).toBe(true);
+  });
+
+  it('refuses to send into a resolved/closed conversation', async () => {
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: { id: CONVERSATION_ID, status: 'closed', human_takeover: true },
+        error: null
+      })
+    );
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'This conversation is resolved. Reopen it to reply.'
+    });
+    // Never attempts an insert into a closed conversation.
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to send before the owner has taken the conversation over', async () => {
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: { id: CONVERSATION_ID, status: 'open', human_takeover: false },
+        error: null
+      })
+    );
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Take over this conversation before sending a reply.'
+    });
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it('inserts role=assistant, sender_type=human after a successful takeover, and returns the new message', async () => {
+    let insertPayload: Record<string, unknown> | undefined;
+    const from = vi.fn((table: string) => {
+      if (table === 'conversations') {
+        return chainable({
+          data: { id: CONVERSATION_ID, status: 'open', human_takeover: true },
+          error: null
+        });
+      }
+      // Capture exactly what was passed to messages.insert(...) via a
+      // thin wrapper around the generic chainable() stub.
+      return {
+        insert: (payload: Record<string, unknown>) => {
+          insertPayload = payload;
+          return chainable({
+            data: {
+              id: 'm-new',
+              role: 'assistant',
+              content: validInput.content,
+              sender_type: 'human',
+              created_at: '2026-01-01T00:00:00Z'
+            },
+            error: null
+          });
+        }
+      };
+    });
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: true,
+      message: {
+        id: 'm-new',
+        role: 'assistant',
+        senderType: 'human',
+        content: validInput.content,
+        createdAt: '2026-01-01T00:00:00Z'
+      }
+    });
+    expect(insertPayload).toEqual({
+      conversation_id: CONVERSATION_ID,
+      role: 'assistant',
+      sender_type: 'human',
+      content: validInput.content,
+      client_message_id: CLIENT_MESSAGE_ID
+    });
+  });
+
+  it('reusing the same client_message_id after a dropped response returns the original message instead of creating a duplicate', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(
+        chainable({
+          data: { id: CONVERSATION_ID, status: 'open', human_takeover: true },
+          error: null
+        })
+      )
+      // The insert appears to fail with a unique-constraint violation —
+      // in reality the first attempt already succeeded and this is a
+      // retry of the same client_message_id.
+      .mockReturnValueOnce(
+        chainable({ data: null, error: { code: '23505', message: 'duplicate key' } })
+      )
+      // The lookup-by-client_message_id fallback finds the row the
+      // first attempt actually inserted.
+      .mockReturnValueOnce(
+        chainable({
+          data: {
+            id: 'm-original',
+            role: 'assistant',
+            content: validInput.content,
+            sender_type: 'human',
+            created_at: '2026-01-01T00:00:00Z'
+          },
+          error: null
+        })
+      );
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: true,
+      message: {
+        id: 'm-original',
+        role: 'assistant',
+        senderType: 'human',
+        content: validInput.content,
+        createdAt: '2026-01-01T00:00:00Z'
+      }
+    });
+    // Exactly one row exists for this client_message_id — the retry
+    // never inserted a second one.
+    expect(from).toHaveBeenCalledTimes(3);
+  });
+
+  it('returns a friendly error instead of a raw database error when the insert fails for a reason other than a duplicate', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(
+        chainable({
+          data: { id: CONVERSATION_ID, status: 'open', human_takeover: true },
+          error: null
+        })
+      )
+      .mockReturnValueOnce(
+        chainable({
+          data: null,
+          error: { code: '42501', message: 'new row violates row-level security policy' }
+        })
+      );
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Something went wrong sending your message. Please try again.'
+    });
+    expect(JSON.stringify(result)).not.toContain('row-level security');
+  });
+
+  it('returns a friendly error instead of a raw database error when the conversation lookup itself fails', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: { message: 'connection reset' } }));
+    mockVerifiedBusiness(from);
+
+    const result = await sendHumanReply(validInput);
+
+    expect(result).toEqual({
+      success: false,
+      error: 'Something went wrong sending your message. Please try again.'
+    });
+    expect(JSON.stringify(result)).not.toContain('connection reset');
   });
 });

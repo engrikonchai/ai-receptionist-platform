@@ -6,10 +6,12 @@
  * schema and must not add columns/tables here that don't exist in a
  * real migration.
  *
- * The one exception: `profiles.onboarding_completed` /
- * `onboarding_completed_at`, added by this repo's own additive
- * migration (supabase/migrations/20260915000100_platform_onboarding.sql,
- * not yet applied — see that file's header for why it's safe).
+ * The exceptions are this repo's own additive migrations:
+ * `profiles.onboarding_completed` / `onboarding_completed_at`
+ * (supabase/migrations/20260915000100_platform_onboarding.sql), and
+ * `messages.sender_type` / `messages.client_message_id`
+ * (supabase/migrations/20260915170200_inbox_human_replies.sql) — see
+ * each file's header for why it's safe. Neither has been applied yet.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -27,6 +29,15 @@ export type LeadStatus = 'new' | 'contacted' | 'confirmed' | 'lost';
 export type LeadSource = 'website' | 'instagram' | 'whatsapp';
 export type HandoffStatus = 'new' | 'contacted' | 'resolved';
 export type WidgetPosition = 'bottom-right' | 'bottom-left';
+/**
+ * Disambiguates who authored a role='assistant' message. Added by
+ * supabase/migrations/20260915170200_inbox_human_replies.sql — every
+ * row written before that migration (and every row ChatbotDemo's own
+ * mock AI engine writes) has `sender_type: null`, which must always be
+ * treated as 'ai' for backward compatibility. Never set for
+ * role='user' or role='system' rows.
+ */
+export type MessageSenderType = 'ai' | 'human';
 
 export interface ProfileRow {
   id: string;
@@ -89,6 +100,10 @@ export interface MessageRow {
   role: MessageRole;
   content: string;
   intent: string | null;
+  /** Null for every pre-migration row and every AI-authored row — always read null as 'ai'. */
+  sender_type: MessageSenderType | null;
+  /** Set only by ai-receptionist-platform's Inbox composer, for double-submit protection. Null for every row ChatbotDemo's own chat engine inserts. */
+  client_message_id: string | null;
   created_at: string;
 }
 

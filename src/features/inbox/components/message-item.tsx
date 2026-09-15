@@ -6,16 +6,27 @@ import { cn } from '@/lib/utils';
 import { formatTimestamp } from '../utils/format';
 import type { ConversationMessage } from '../api/types';
 
-const ROLE_LABEL: Record<ConversationMessage['role'], string> = {
-  user: 'Customer',
-  assistant: 'AI Receptionist',
-  system: 'System'
-};
+function messageLabel(message: ConversationMessage): string {
+  if (message.role === 'user') return 'Customer';
+  if (message.role === 'system') return 'System';
+  return message.senderType === 'human' ? 'Human operator' : 'AI Receptionist';
+}
 
-function RoleIcon({ role }: { role: ConversationMessage['role'] }) {
-  if (role === 'assistant') return <Icons.aiAgent className='size-3.5' aria-hidden='true' />;
-  if (role === 'system') return <Icons.info className='size-3.5' aria-hidden='true' />;
+function RoleIcon({ message }: { message: ConversationMessage }) {
+  if (message.role === 'system') return <Icons.info className='size-3.5' aria-hidden='true' />;
+  if (message.role === 'assistant') {
+    return message.senderType === 'human' ? (
+      <Icons.humanAgent className='size-3.5' aria-hidden='true' />
+    ) : (
+      <Icons.aiAgent className='size-3.5' aria-hidden='true' />
+    );
+  }
   return <Icons.user className='size-3.5' aria-hidden='true' />;
+}
+
+function bubbleVariant(message: ConversationMessage): 'default' | 'tinted' | 'muted' {
+  if (message.role !== 'assistant') return 'muted';
+  return message.senderType === 'human' ? 'default' : 'tinted';
 }
 
 export function MessageItem({ message }: { message: ConversationMessage }) {
@@ -43,17 +54,17 @@ export function MessageItem({ message }: { message: ConversationMessage }) {
               isOutgoing ? 'bg-primary/15 text-primary' : 'bg-muted text-foreground'
             )}
           >
-            <RoleIcon role={message.role} />
+            <RoleIcon message={message} />
           </AvatarFallback>
         </Avatar>
       </MessageAvatar>
       <MessageContent>
         <MessageHeader className={cn('gap-1.5', isOutgoing && 'justify-end')}>
-          <span className='font-medium'>{ROLE_LABEL[message.role]}</span>
+          <span className='font-medium'>{messageLabel(message)}</span>
           <span aria-hidden='true'>·</span>
           <span>{formatTimestamp(message.createdAt)}</span>
         </MessageHeader>
-        <Bubble variant={isOutgoing ? 'tinted' : 'muted'} align={isOutgoing ? 'end' : 'start'}>
+        <Bubble variant={bubbleVariant(message)} align={isOutgoing ? 'end' : 'start'}>
           <BubbleContent>{message.content}</BubbleContent>
         </Bubble>
       </MessageContent>
