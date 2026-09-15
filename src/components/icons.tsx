@@ -5,6 +5,7 @@ import {
   IconArrowRight,
   IconBell,
   IconBold,
+  IconBook2,
   IconBox,
   IconBrandGithub,
   IconBrandTwitter,
@@ -83,6 +84,7 @@ import {
   IconUser,
   IconUserCircle,
   IconUserEdit,
+  IconUserPlus,
   IconUserX,
   IconUsers,
   IconVideo,
@@ -136,6 +138,8 @@ export const Icons = {
   employee: IconUserX,
   userPen: IconUserEdit,
   teams: IconUsers,
+  leads: IconUserPlus,
+  knowledge: IconBook2,
 
   // Brand
   github: IconBrandGithub,
