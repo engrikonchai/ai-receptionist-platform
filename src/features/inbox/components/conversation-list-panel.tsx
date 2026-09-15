@@ -1,69 +1,99 @@
 'use client';
 
 import { useMemo } from 'react';
+import Link from 'next/link';
+import { useQuery } from '@tanstack/react-query';
 import { Icons } from '@/components/icons';
+import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
 import { CHANNEL_LABEL } from '../utils/format';
-import type { Channel, Conversation, StatusFilter } from '../utils/types';
+import { conversationsOptions } from '../api/queries';
+import { SESSION_EXPIRED_MESSAGE } from '../api/types';
+import type { ConversationChannel, ConversationListItem, InboxStatusFilter } from '../api/types';
 import { ChannelIcon } from './channel-icon';
 import { ConversationRow } from './conversation-row';
 
-const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
+const STATUS_FILTERS: { value: InboxStatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
-  { value: 'unread', label: 'Unread' },
-  { value: 'needs_attention', label: 'Needs attention' },
-  { value: 'resolved', label: 'Resolved' }
+  { value: 'open', label: 'Open' },
+  { value: 'handed_off', label: 'Handed off' },
+  { value: 'closed', label: 'Closed' }
 ];
 
-const CHANNELS: Channel[] = ['website', 'instagram', 'whatsapp'];
+const CHANNELS: ConversationChannel[] = ['website', 'instagram', 'whatsapp'];
 
-function matchesStatus(conversation: Conversation, filter: StatusFilter) {
-  switch (filter) {
-    case 'unread':
-      return conversation.unreadCount > 0;
-    case 'needs_attention':
-      return conversation.status === 'needs_attention';
-    case 'resolved':
-      return conversation.status === 'resolved';
-    default:
-      return true;
-  }
+function matchesStatus(item: ConversationListItem, filter: InboxStatusFilter) {
+  return filter === 'all' || item.status === filter;
 }
 
-export function ConversationListPanel({ className }: { className?: string }) {
-  const conversations = useInboxStore((state) => state.conversations);
+function matchesQuery(item: ConversationListItem, query: string) {
+  if (!query) return true;
+  const haystack = [item.displayName, item.leadContact ?? '', item.latestMessagePreview ?? '']
+    .join(' ')
+    .toLowerCase();
+  return haystack.includes(query);
+}
+
+function ConversationListSkeleton() {
+  return (
+    <div className='space-y-2 p-1' aria-hidden='true'>
+      {Array.from({ length: 6 }).map((_, index) => (
+        <div key={index} className='flex items-start gap-2.5 rounded-lg p-2.5'>
+          <Skeleton className='size-8 shrink-0 rounded-full' />
+          <div className='min-w-0 flex-1 space-y-2'>
+            <Skeleton className='h-3.5 w-2/3' />
+            <Skeleton className='h-3 w-full' />
+            <Skeleton className='h-3 w-1/3' />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ConversationListPanel({
+  businessId,
+  className
+}: {
+  businessId: string;
+  className?: string;
+}) {
+  const {
+    data: conversations,
+    isPending,
+    isError,
+    error,
+    refetch
+  } = useQuery(conversationsOptions(businessId));
+
   const selectedConversationId = useInboxStore((state) => state.selectedConversationId);
   const searchQuery = useInboxStore((state) => state.searchQuery);
   const statusFilter = useInboxStore((state) => state.statusFilter);
   const channelFilters = useInboxStore((state) => state.channelFilters);
-  const selectConversation = useInboxStore((state) => state.selectConversation);
+  const openConversation = useInboxStore((state) => state.openConversation);
   const setSearchQuery = useInboxStore((state) => state.setSearchQuery);
   const setStatusFilter = useInboxStore((state) => state.setStatusFilter);
   const toggleChannelFilter = useInboxStore((state) => state.toggleChannelFilter);
 
   const filtered = useMemo(() => {
+    if (!conversations) return [];
     const query = searchQuery.trim().toLowerCase();
     return conversations.filter((conversation) => {
       if (!matchesStatus(conversation, statusFilter)) return false;
       if (channelFilters.length > 0 && !channelFilters.includes(conversation.channel)) {
         return false;
       }
-      if (!query) return true;
-      const lastMessage = conversation.messages[conversation.messages.length - 1];
-      const haystack = [
-        conversation.customer.name,
-        conversation.customer.email,
-        lastMessage?.text ?? ''
-      ]
-        .join(' ')
-        .toLowerCase();
-      return haystack.includes(query);
+      return matchesQuery(conversation, query);
     });
   }, [conversations, searchQuery, statusFilter, channelFilters]);
+
+  const errorMessage = error instanceof Error ? error.message : 'Please try again.';
+  const isSessionExpired = isError && errorMessage === SESSION_EXPIRED_MESSAGE;
 
   return (
     <Card className={cn('flex h-full min-h-0 flex-col gap-0 overflow-hidden p-0', className)}>
@@ -71,7 +101,9 @@ export function ConversationListPanel({ className }: { className?: string }) {
         <div className='flex items-center justify-between gap-2'>
           <h2 className='text-foreground text-base font-semibold'>Inbox</h2>
           <span className='text-muted-foreground text-xs'>
-            {conversations.length} conversation{conversations.length === 1 ? '' : 's'}
+            {conversations
+              ? `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`
+              : ''}
           </span>
         </div>
 
@@ -90,6 +122,7 @@ export function ConversationListPanel({ className }: { className?: string }) {
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder='Search conversations'
             className='pl-8'
+            disabled={!conversations || conversations.length === 0}
           />
         </div>
 
@@ -149,25 +182,72 @@ export function ConversationListPanel({ className }: { className?: string }) {
         role='list'
         aria-label='Conversations'
       >
-        {filtered.length === 0 ? (
+        {isPending && <ConversationListSkeleton />}
+
+        {isError && (
           <Empty className='h-full border-none'>
             <EmptyMedia variant='icon'>
-              <Icons.search aria-hidden='true' />
+              <Icons.alertCircle aria-hidden='true' />
             </EmptyMedia>
-            <EmptyTitle>No conversations found</EmptyTitle>
-            <EmptyDescription>Try a different search term or clear your filters.</EmptyDescription>
+            <EmptyTitle>
+              {isSessionExpired ? 'Session expired' : 'Could not load conversations'}
+            </EmptyTitle>
+            <EmptyDescription>{errorMessage}</EmptyDescription>
+            {isSessionExpired ? (
+              <Button
+                size='sm'
+                render={<Link href='/login?next=/dashboard/inbox' aria-label='Sign in again' />}
+              >
+                Sign in again
+              </Button>
+            ) : (
+              <Button type='button' variant='outline' size='sm' onClick={() => refetch()}>
+                <Icons.refresh className='size-3.5' aria-hidden='true' />
+                Try again
+              </Button>
+            )}
           </Empty>
-        ) : (
+        )}
+
+        {!isPending && !isError && conversations && conversations.length === 0 && (
+          <Empty className='h-full border-none'>
+            <EmptyMedia variant='icon'>
+              <Icons.chat aria-hidden='true' />
+            </EmptyMedia>
+            <EmptyTitle>No conversations yet</EmptyTitle>
+            <EmptyDescription>
+              New conversations will appear here once customers start chatting.
+            </EmptyDescription>
+          </Empty>
+        )}
+
+        {!isPending &&
+          !isError &&
+          conversations &&
+          conversations.length > 0 &&
+          filtered.length === 0 && (
+            <Empty className='h-full border-none'>
+              <EmptyMedia variant='icon'>
+                <Icons.search aria-hidden='true' />
+              </EmptyMedia>
+              <EmptyTitle>No conversations found</EmptyTitle>
+              <EmptyDescription>
+                Try a different search term or clear your filters.
+              </EmptyDescription>
+            </Empty>
+          )}
+
+        {!isPending &&
+          !isError &&
           filtered.map((conversation) => (
             <div key={conversation.id} role='listitem'>
               <ConversationRow
                 conversation={conversation}
                 isActive={conversation.id === selectedConversationId}
-                onSelect={selectConversation}
+                onSelect={openConversation}
               />
             </div>
-          ))
-        )}
+          ))}
       </div>
     </Card>
   );

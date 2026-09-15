@@ -1,43 +1,39 @@
 import { create } from 'zustand';
-import { initialConversations } from './data';
-import { nowTimestamp } from './format';
-import type { Channel, Conversation, Message, StatusFilter } from './types';
+import type { ConversationChannel } from '@/lib/supabase/database.types';
+import type { InboxStatusFilter } from '../api/types';
 
-const CURRENT_OPERATOR = 'Demo Owner';
+/**
+ * Inbox UI-only state — selection, filters, panel/sheet open state. No
+ * conversation, message, lead or handoff data lives here: that all comes
+ * from React Query (`../api/queries.ts`), backed by real Supabase reads,
+ * and is never cached only in browser memory.
+ */
 
 type MobileView = 'list' | 'thread';
 
-type InboxState = {
-  conversations: Conversation[];
-  selectedConversationId: string;
-  draft: string;
+type InboxUiState = {
+  selectedConversationId: string | null;
   searchQuery: string;
-  statusFilter: StatusFilter;
-  channelFilters: Channel[];
+  statusFilter: InboxStatusFilter;
+  channelFilters: ConversationChannel[];
   customerPanelCollapsed: boolean;
   mobileView: MobileView;
   customerSheetOpen: boolean;
 
+  /** Sets the active conversation without changing mobile navigation — used for auto-selecting the first conversation on load. */
   selectConversation: (id: string) => void;
-  setDraft: (text: string) => void;
-  sendMessage: () => void;
-  insertSuggestedReply: (text: string) => void;
-  takeOver: (id: string) => void;
-  returnToAI: (id: string) => void;
-  addNote: (id: string, text: string) => void;
+  /** Sets the active conversation and, on mobile, navigates to the thread — used when a user taps a conversation row. */
+  openConversation: (id: string) => void;
   setSearchQuery: (query: string) => void;
-  setStatusFilter: (filter: StatusFilter) => void;
-  toggleChannelFilter: (channel: Channel) => void;
+  setStatusFilter: (filter: InboxStatusFilter) => void;
+  toggleChannelFilter: (channel: ConversationChannel) => void;
   setCustomerPanelCollapsed: (collapsed: boolean) => void;
   setMobileView: (view: MobileView) => void;
   setCustomerSheetOpen: (open: boolean) => void;
-  getActiveConversation: () => Conversation | undefined;
 };
 
-export const useInboxStore = create<InboxState>()((set, get) => ({
-  conversations: initialConversations,
-  selectedConversationId: initialConversations[0]?.id ?? '',
-  draft: '',
+export const useInboxStore = create<InboxUiState>()((set) => ({
+  selectedConversationId: null,
   searchQuery: '',
   statusFilter: 'all',
   channelFilters: [],
@@ -45,95 +41,9 @@ export const useInboxStore = create<InboxState>()((set, get) => ({
   mobileView: 'list',
   customerSheetOpen: false,
 
-  selectConversation: (id) =>
-    set((state) => ({
-      selectedConversationId: id,
-      mobileView: 'thread',
-      draft: '',
-      conversations: state.conversations.map((c) => (c.id === id ? { ...c, unreadCount: 0 } : c))
-    })),
+  selectConversation: (id) => set({ selectedConversationId: id }),
 
-  setDraft: (text) => set({ draft: text }),
-
-  sendMessage: () => {
-    const state = get();
-    const text = state.draft.trim();
-    if (!text) return;
-    const active = state.conversations.find((c) => c.id === state.selectedConversationId);
-    if (!active) return;
-
-    const outgoing: Message = {
-      id: `${active.id}-out-${Date.now()}`,
-      sender: active.handledBy === 'human' ? 'human' : 'ai',
-      author: active.handledBy === 'human' ? CURRENT_OPERATOR : 'AI Receptionist',
-      text,
-      timestamp: nowTimestamp()
-    };
-
-    set({
-      draft: '',
-      conversations: state.conversations.map((c) =>
-        c.id === active.id ? { ...c, messages: [...c.messages, outgoing] } : c
-      )
-    });
-  },
-
-  insertSuggestedReply: (text) => set({ draft: text }),
-
-  takeOver: (id) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.id !== id || c.handledBy === 'human') return c;
-        const event: Message = {
-          id: `${id}-event-${Date.now()}`,
-          sender: 'system',
-          author: 'System',
-          text: `${CURRENT_OPERATOR} took over this conversation from AI Receptionist.`,
-          timestamp: nowTimestamp()
-        };
-        return { ...c, handledBy: 'human', messages: [...c.messages, event] };
-      })
-    })),
-
-  returnToAI: (id) =>
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.id !== id || c.handledBy === 'ai') return c;
-        const event: Message = {
-          id: `${id}-event-${Date.now()}`,
-          sender: 'system',
-          author: 'System',
-          text: `${CURRENT_OPERATOR} returned this conversation to AI Receptionist.`,
-          timestamp: nowTimestamp()
-        };
-        return { ...c, handledBy: 'ai', messages: [...c.messages, event] };
-      })
-    })),
-
-  addNote: (id, text) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    set((state) => ({
-      conversations: state.conversations.map((c) => {
-        if (c.id !== id) return c;
-        return {
-          ...c,
-          customer: {
-            ...c.customer,
-            notes: [
-              ...c.customer.notes,
-              {
-                id: `${id}-note-${Date.now()}`,
-                author: CURRENT_OPERATOR,
-                text: trimmed,
-                timestamp: nowTimestamp()
-              }
-            ]
-          }
-        };
-      })
-    }));
-  },
+  openConversation: (id) => set({ selectedConversationId: id, mobileView: 'thread' }),
 
   setSearchQuery: (query) => set({ searchQuery: query }),
   setStatusFilter: (filter) => set({ statusFilter: filter }),
@@ -147,12 +57,5 @@ export const useInboxStore = create<InboxState>()((set, get) => ({
 
   setCustomerPanelCollapsed: (collapsed) => set({ customerPanelCollapsed: collapsed }),
   setMobileView: (view) => set({ mobileView: view }),
-  setCustomerSheetOpen: (open) => set({ customerSheetOpen: open }),
-
-  getActiveConversation: () => {
-    const state = get();
-    return state.conversations.find((c) => c.id === state.selectedConversationId);
-  }
+  setCustomerSheetOpen: (open) => set({ customerSheetOpen: open })
 }));
-
-export { CURRENT_OPERATOR };

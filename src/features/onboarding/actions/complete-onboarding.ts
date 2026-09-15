@@ -1,5 +1,7 @@
 'use server';
 
+import { redirect } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured } from '@/lib/supabase/env';
 import { onboardingSchema } from '../schemas/onboarding';
@@ -109,5 +111,21 @@ export async function completeOnboarding(input: unknown): Promise<CompleteOnboar
     };
   }
 
-  return { success: true };
+  // Every update above succeeded. Make the dashboard reflect the new
+  // data on next load, then hand off navigation to Next.js itself.
+  //
+  // `redirect()` works by throwing a special NEXT_REDIRECT-digested
+  // error that Next's own Server Action machinery is built to catch —
+  // both to send the client the right response and, for an action
+  // called imperatively like this one, to perform the navigation
+  // itself. It must never be wrapped in a try/catch (here or by a
+  // caller): doing so converts that signal into an ordinary thrown
+  // error before the framework ever sees it, so the action just
+  // resolves with no navigation — the exact bug this fixes. Every
+  // failure path above already returned explicitly instead of
+  // throwing, so there is nothing above this line that could catch it,
+  // and nothing below it either — this is deliberately the last thing
+  // the function does.
+  revalidatePath('/dashboard/overview');
+  redirect('/dashboard/overview');
 }

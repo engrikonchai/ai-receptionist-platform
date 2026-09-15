@@ -1,9 +1,14 @@
+import { Icons } from '@/components/icons';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { cn } from '@/lib/utils';
-import { LANGUAGE_LABEL } from '../utils/format';
-import type { Conversation } from '../utils/types';
+import { formatTimestamp, languageLabel } from '../utils/format';
+import type { ConversationListItem } from '../api/types';
 import { ChannelIcon } from './channel-icon';
-import { ConversationStatusBadge } from './status-badge';
+import {
+  ConversationStatusBadge,
+  HandoffStatusIndicator,
+  HumanTakeoverBadge
+} from './status-badge';
 
 function initialsFor(name: string) {
   return name
@@ -20,18 +25,18 @@ export function ConversationRow({
   isActive,
   onSelect
 }: {
-  conversation: Conversation;
+  conversation: ConversationListItem;
   isActive: boolean;
   onSelect: (id: string) => void;
 }) {
-  const lastMessage = conversation.messages[conversation.messages.length - 1];
+  const activityAt = conversation.latestMessageAt ?? conversation.updatedAt;
 
   return (
     <button
       type='button'
       onClick={() => onSelect(conversation.id)}
       aria-current={isActive ? 'true' : undefined}
-      aria-label={`Conversation with ${conversation.customer.name}`}
+      aria-label={`Conversation with ${conversation.displayName}`}
       className={cn(
         'focus-visible:ring-ring focus-visible:ring-offset-background w-full rounded-lg border border-l-2 border-transparent px-2.5 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
         isActive ? 'border-l-primary bg-accent' : 'hover:bg-muted/60 border-l-transparent'
@@ -40,39 +45,39 @@ export function ConversationRow({
       <div className='flex items-start gap-2.5'>
         <Avatar className='mt-0.5 shrink-0'>
           <AvatarFallback className='bg-primary/10 text-primary text-xs font-semibold'>
-            {initialsFor(conversation.customer.name)}
+            {conversation.hasLeadName ? (
+              initialsFor(conversation.displayName)
+            ) : (
+              <Icons.user className='size-4' aria-hidden='true' />
+            )}
           </AvatarFallback>
         </Avatar>
 
         <div className='min-w-0 flex-1 space-y-1'>
           <div className='flex items-center justify-between gap-2'>
             <p className='text-foreground truncate text-sm font-semibold'>
-              {conversation.customer.name}
+              {conversation.displayName}
             </p>
             <span className='text-muted-foreground shrink-0 text-[0.7rem] tabular-nums'>
-              {lastMessage?.timestamp}
+              {formatTimestamp(activityAt)}
             </span>
           </div>
 
           <p className='text-muted-foreground truncate text-xs'>
-            {lastMessage ? `${lastMessage.author}: ${lastMessage.text}` : 'No messages yet'}
+            {conversation.latestMessagePreview ?? 'No messages yet'}
           </p>
 
           <div className='flex flex-wrap items-center justify-between gap-1.5 pt-0.5'>
             <div className='text-muted-foreground flex min-w-0 items-center gap-2 text-[0.7rem]'>
               <ChannelIcon channel={conversation.channel} />
-              <span className='truncate'>{LANGUAGE_LABEL[conversation.language]}</span>
+              <span className='truncate'>{languageLabel(conversation.detectedLanguage)}</span>
             </div>
-            <div className='flex shrink-0 items-center gap-1.5'>
-              {conversation.unreadCount > 0 && (
-                <span
-                  className='bg-primary text-primary-foreground inline-flex min-h-5 min-w-5 items-center justify-center rounded-full px-1 text-[0.65rem] font-semibold'
-                  aria-label={`${conversation.unreadCount} unread messages`}
-                >
-                  {conversation.unreadCount}
-                </span>
+            <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+              {conversation.handoffStatus && (
+                <HandoffStatusIndicator status={conversation.handoffStatus} />
               )}
-              <ConversationStatusBadge conversation={conversation} />
+              <HumanTakeoverBadge humanTakeover={conversation.humanTakeover} />
+              <ConversationStatusBadge status={conversation.status} />
             </div>
           </div>
         </div>

@@ -1,16 +1,26 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Separator } from '@/components/ui/separator';
+import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
-import { LEAD_STATUS_LABEL } from '../utils/format';
-import type { Conversation } from '../utils/types';
+import {
+  CHANNEL_LABEL,
+  HANDOFF_STATUS_LABEL,
+  LEAD_STATUS_LABEL,
+  languageLabel
+} from '../utils/format';
+import { conversationHandoffOptions, conversationLeadOptions } from '../api/queries';
+import type { ConversationListItem } from '../api/types';
+
+const NOT_PROVIDED = 'Not provided';
 
 function DetailRow({
   icon: Icon,
@@ -32,138 +42,181 @@ function DetailRow({
   );
 }
 
-export function CustomerDetailsContent({ conversation }: { conversation: Conversation }) {
-  const addNote = useInboxStore((state) => state.addNote);
-  const [noteDraft, setNoteDraft] = useState('');
+function SectionSkeleton() {
+  return (
+    <div className='space-y-2.5' aria-hidden='true'>
+      <Skeleton className='h-4 w-20' />
+      <Skeleton className='h-3.5 w-full' />
+      <Skeleton className='h-3.5 w-full' />
+      <Skeleton className='h-3.5 w-2/3' />
+    </div>
+  );
+}
 
-  const { customer } = conversation;
+function SectionError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div className='space-y-2 text-sm'>
+      <p className='text-muted-foreground'>{message}</p>
+      <Button type='button' variant='outline' size='sm' onClick={onRetry}>
+        <Icons.refresh className='size-3.5' aria-hidden='true' />
+        Try again
+      </Button>
+    </div>
+  );
+}
 
-  const handleAddNote = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    if (!noteDraft.trim()) return;
-    addNote(conversation.id, noteDraft);
-    setNoteDraft('');
-  };
+function LeadSection({
+  businessId,
+  conversationId
+}: {
+  businessId: string;
+  conversationId: string;
+}) {
+  const { data, isPending, isError, refetch } = useQuery(
+    conversationLeadOptions(businessId, conversationId)
+  );
 
+  if (isPending) return <SectionSkeleton />;
+  if (isError) {
+    return <SectionError message='We could not load lead details.' onRetry={() => refetch()} />;
+  }
+  if (data.status === 'not_found') {
+    return (
+      <p className='text-muted-foreground text-sm'>No lead captured for this conversation yet.</p>
+    );
+  }
+
+  const { lead } = data;
+
+  return (
+    <div className='space-y-3'>
+      <div className='flex items-center justify-between gap-2'>
+        <p className='text-foreground text-sm font-medium'>Lead</p>
+        <Badge variant='secondary'>{LEAD_STATUS_LABEL[lead.status]}</Badge>
+      </div>
+      <DetailRow icon={Icons.user} label='Name' value={lead.name.trim() || NOT_PROVIDED} />
+      <DetailRow icon={Icons.phone} label='Contact' value={lead.contact.trim() || NOT_PROVIDED} />
+      <DetailRow icon={Icons.calendar} label='Check-in' value={lead.checkIn ?? NOT_PROVIDED} />
+      <DetailRow icon={Icons.calendar} label='Check-out' value={lead.checkOut ?? NOT_PROVIDED} />
+      <DetailRow
+        icon={Icons.teams}
+        label='Guests'
+        value={lead.guestCount !== null ? String(lead.guestCount) : NOT_PROVIDED}
+      />
+      <DetailRow icon={Icons.pin} label='Source' value={CHANNEL_LABEL[lead.source]} />
+      <DetailRow icon={Icons.chat} label='Language' value={languageLabel(lead.language)} />
+      <DetailRow icon={Icons.edit} label='Note' value={lead.note?.trim() || NOT_PROVIDED} />
+    </div>
+  );
+}
+
+function HandoffSection({
+  businessId,
+  conversationId
+}: {
+  businessId: string;
+  conversationId: string;
+}) {
+  const { data, isPending, isError, refetch } = useQuery(
+    conversationHandoffOptions(businessId, conversationId)
+  );
+
+  if (isPending) return <SectionSkeleton />;
+  if (isError) {
+    return <SectionError message='We could not load handoff details.' onRetry={() => refetch()} />;
+  }
+  if (data.status === 'not_found') {
+    return (
+      <p className='text-muted-foreground text-sm'>No handoff requested for this conversation.</p>
+    );
+  }
+
+  const { handoff } = data;
+
+  return (
+    <div className='space-y-3'>
+      <div className='flex items-center justify-between gap-2'>
+        <p className='text-foreground text-sm font-medium'>Handoff</p>
+        <Badge variant={handoff.status === 'resolved' ? 'outline' : 'destructive'}>
+          {HANDOFF_STATUS_LABEL[handoff.status]}
+        </Badge>
+      </div>
+      <DetailRow
+        icon={Icons.user}
+        label='Customer name'
+        value={handoff.customerName?.trim() || NOT_PROVIDED}
+      />
+      <DetailRow
+        icon={Icons.phone}
+        label='Contact'
+        value={handoff.contact.trim() || NOT_PROVIDED}
+      />
+      <DetailRow
+        icon={Icons.chat}
+        label='Question'
+        value={handoff.question?.trim() || NOT_PROVIDED}
+      />
+      <DetailRow icon={Icons.info} label='Reason' value={handoff.reason?.trim() || NOT_PROVIDED} />
+    </div>
+  );
+}
+
+export function CustomerDetailsContent({
+  businessId,
+  conversation
+}: {
+  businessId: string;
+  conversation: ConversationListItem;
+}) {
   return (
     <div className='space-y-4 text-sm'>
       <div>
-        <p className='text-foreground text-base font-semibold'>{customer.name}</p>
-        <Badge variant='secondary' className='mt-1'>
-          {LEAD_STATUS_LABEL[customer.leadStatus]}
-        </Badge>
+        <p className='text-foreground text-base font-semibold'>{conversation.displayName}</p>
+        <p className='text-muted-foreground text-xs'>{conversation.maskedVisitorId}</p>
       </div>
 
       <Separator />
 
-      <div className='space-y-3'>
-        <DetailRow icon={Icons.chat} label='Email' value={customer.email} />
-        <DetailRow icon={Icons.phone} label='Phone' value={customer.phone} />
-      </div>
+      <LeadSection businessId={businessId} conversationId={conversation.id} />
 
       <Separator />
 
-      <div className='space-y-3'>
-        <DetailRow
-          icon={Icons.calendar}
-          label='Check-in'
-          value={customer.checkIn ?? 'Not specified'}
-        />
-        <DetailRow
-          icon={Icons.calendar}
-          label='Check-out'
-          value={customer.checkOut ?? 'Not specified'}
-        />
-        <DetailRow
-          icon={Icons.teams}
-          label='Guests'
-          value={customer.guests !== null ? String(customer.guests) : 'Not specified'}
-        />
-        <DetailRow
-          icon={Icons.pin}
-          label='Requested accommodation'
-          value={customer.requestedAccommodation}
-        />
-        <DetailRow
-          icon={Icons.creditCard}
-          label='Estimated booking value'
-          value={customer.estimatedBookingValue}
-        />
-      </div>
-
-      {customer.tags.length > 0 && (
-        <>
-          <Separator />
-          <div>
-            <p className='text-muted-foreground mb-1.5 flex items-center gap-1.5 text-xs'>
-              <Icons.tag className='size-3.5' aria-hidden='true' />
-              Tags
-            </p>
-            <div className='flex flex-wrap gap-1.5'>
-              {customer.tags.map((tag) => (
-                <Badge key={tag} variant='outline'>
-                  {tag}
-                </Badge>
-              ))}
-            </div>
-          </div>
-        </>
-      )}
-
-      <Separator />
-
-      <DetailRow
-        icon={Icons.userPen}
-        label='Assigned team member'
-        value={customer.assignedTeamMember}
-      />
+      <HandoffSection businessId={businessId} conversationId={conversation.id} />
 
       <Separator />
 
       <div>
-        <p className='text-foreground mb-2 text-sm font-medium'>Internal notes</p>
-        <div className='space-y-2'>
-          {customer.notes.length === 0 ? (
-            <p className='text-muted-foreground text-xs'>No notes yet.</p>
-          ) : (
-            customer.notes.map((note) => (
-              <div key={note.id} className='bg-muted rounded-lg p-2.5 text-xs'>
-                <p className='text-foreground'>{note.text}</p>
-                <p className='text-muted-foreground mt-1'>
-                  {note.author} · {note.timestamp}
-                </p>
-              </div>
-            ))
-          )}
-        </div>
-
-        <form onSubmit={handleAddNote} className='mt-2.5 space-y-2'>
-          <label htmlFor={`note-${conversation.id}`} className='sr-only'>
-            Add an internal note
-          </label>
-          <Textarea
-            id={`note-${conversation.id}`}
-            value={noteDraft}
-            onChange={(e) => setNoteDraft(e.target.value)}
-            placeholder='Add an internal note (not visible to the guest)'
-            rows={2}
-            className='min-h-16 text-sm'
-          />
-          <Button type='submit' size='sm' variant='outline' disabled={!noteDraft.trim()}>
+        <p className='text-foreground mb-1.5 text-sm font-medium'>Internal notes</p>
+        <p className='text-muted-foreground mb-2 text-xs'>
+          Internal notes will be enabled in a future update.
+        </p>
+        <Textarea
+          placeholder='Add an internal note (not visible to the guest)'
+          rows={2}
+          disabled
+          className='min-h-16 text-sm'
+        />
+        <Tooltip>
+          <TooltipTrigger
+            render={<Button type='button' size='sm' variant='outline' disabled className='mt-2' />}
+          >
             <Icons.add className='size-3.5' aria-hidden='true' />
             Add note
-          </Button>
-        </form>
+          </TooltipTrigger>
+          <TooltipContent>Internal notes will be enabled in a future update</TooltipContent>
+        </Tooltip>
       </div>
     </div>
   );
 }
 
 export function CustomerDetailsPanel({
+  businessId,
   conversation,
   className
 }: {
-  conversation: Conversation;
+  businessId: string;
+  conversation: ConversationListItem;
   className?: string;
 }) {
   const collapsed = useInboxStore((state) => state.customerPanelCollapsed);
@@ -208,7 +261,7 @@ export function CustomerDetailsPanel({
         </Button>
       </div>
       <div className='min-h-0 flex-1 overflow-y-auto p-3'>
-        <CustomerDetailsContent conversation={conversation} />
+        <CustomerDetailsContent businessId={businessId} conversation={conversation} />
       </div>
     </Card>
   );
