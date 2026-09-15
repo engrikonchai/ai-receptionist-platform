@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { getPublicSupabaseEnv } from '@/lib/supabase/env';
-import { DEFAULT_REDIRECT_PATH, resolveSafeNextPath } from '@/lib/safe-redirect';
 
 /**
  * Runs on every request to an auth-relevant route. Two jobs:
@@ -9,14 +8,17 @@ import { DEFAULT_REDIRECT_PATH, resolveSafeNextPath } from '@/lib/safe-redirect'
  * 1. Refresh the Supabase session cookies (so a session doesn't silently
  *    expire mid-visit) by calling `auth.getUser()`.
  * 2. An *optimistic* redirect: bounce a signed-out visitor away from
- *    `/dashboard/*` to `/login`, and a signed-in owner away from
- *    `/login`/`/signup` to the dashboard.
+ *    `/dashboard/*` and `/onboarding` to `/login`.
  *
- * This is a fast-path convenience only — it is not the real security
- * boundary. The actual enforcement is `app/dashboard/layout.tsx` (a
- * Server Component that re-checks the session) and Row Level Security
- * on every table. Per Next.js's own guidance, Proxy should never be
- * relied on as the sole authorization mechanism.
+ * Deliberately does NOT bounce a signed-in visitor away from
+ * `/login`/`/signup` here — where they belong depends on
+ * `profiles.onboarding_completed`, which would mean an extra table
+ * query on every request just for this fast path. That decision is
+ * made once, correctly, by the Server Component on each of those pages
+ * (login/page.tsx, signup/page.tsx, onboarding/page.tsx,
+ * dashboard/layout.tsx) — which is the real security boundary anyway.
+ * Per Next.js's own guidance, Proxy should never be relied on as the
+ * sole authorization mechanism.
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -47,24 +49,19 @@ export async function proxy(request: NextRequest) {
     data: { user }
   } = await supabase.auth.getUser();
 
-  const { pathname, searchParams } = request.nextUrl;
-  const isDashboardRoute = pathname === '/dashboard' || pathname.startsWith('/dashboard/');
-  const isAuthPage = pathname === '/login' || pathname === '/signup';
+  const { pathname } = request.nextUrl;
+  const isProtectedRoute =
+    pathname === '/dashboard' || pathname.startsWith('/dashboard/') || pathname === '/onboarding';
 
-  if (!user && isDashboardRoute) {
+  if (!user && isProtectedRoute) {
     const loginUrl = new URL('/login', request.url);
     loginUrl.searchParams.set('next', pathname);
     return NextResponse.redirect(loginUrl);
-  }
-
-  if (user && isAuthPage) {
-    const target = resolveSafeNextPath(searchParams.get('next'), DEFAULT_REDIRECT_PATH);
-    return NextResponse.redirect(new URL(target, request.url));
   }
 
   return response;
 }
 
 export const config = {
-  matcher: ['/dashboard', '/dashboard/:path*', '/login', '/signup']
+  matcher: ['/dashboard', '/dashboard/:path*', '/onboarding', '/login', '/signup']
 };

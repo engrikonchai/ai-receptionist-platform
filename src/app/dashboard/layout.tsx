@@ -4,9 +4,13 @@ import Header from '@/components/layout/header';
 import { InfoSidebar } from '@/components/layout/info-sidebar';
 import { InfobarProvider } from '@/components/ui/infobar';
 import { SidebarInset, SidebarProvider } from '@/components/ui/sidebar';
-import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
-import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
+import {
+  ACTIVE_BUSINESS_COOKIE,
+  loadOwnerContext,
+  resolveActiveBusinessId
+} from '@/lib/supabase/owner-context';
+import { AccountRecovery } from '@/features/auth/components/account-recovery';
 import type { Metadata } from 'next';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
@@ -23,8 +27,6 @@ export const metadata: Metadata = {
 // The dashboard is always per-user, cookie-authenticated content — never
 // prerender or statically cache it.
 export const dynamic = 'force-dynamic';
-
-const ACTIVE_BUSINESS_COOKIE = 'active_business_id';
 
 export default async function DashboardLayout({ children }: { children: React.ReactNode }) {
   if (!isSupabaseConfigured()) {
@@ -43,32 +45,32 @@ export default async function DashboardLayout({ children }: { children: React.Re
   // but per Next's own guidance that's a fast-path convenience only —
   // this Server Component re-checks the session on every request and is
   // what actually keeps the dashboard private.
-  const supabase = await createSupabaseServerClient();
-  const {
-    data: { user }
-  } = await supabase!.auth.getUser();
+  const ctx = await loadOwnerContext();
 
-  if (!user) {
+  if (ctx.status === 'unauthenticated') {
     redirect('/login?next=/dashboard/overview');
   }
 
-  // Owner identity + the businesses RLS lets this user see. Both queries
-  // run as the signed-in user's own session — no service-role key, no
-  // manual owner_id filtering (Row Level Security already scopes both).
-  const [{ data: profile }, { data: businesses }] = await Promise.all([
-    supabase!.from('profiles').select('*').eq('id', user.id).maybeSingle(),
-    supabase!.from('businesses').select('*').order('created_at', { ascending: true })
-  ]);
+  // No profile and/or no business yet — never a redirect loop with
+  // /onboarding, which hits the exact same case and shows the same
+  // recovery state instead of bouncing back here.
+  if (ctx.status === 'incomplete_profile') {
+    return <AccountRecovery email={ctx.user.email ?? undefined} />;
+  }
+
+  if (!ctx.profile.onboarding_completed) {
+    redirect('/onboarding');
+  }
+
+  const { user, profile, businesses } = ctx;
 
   const cookieStore = await cookies();
   const defaultOpen = cookieStore.get('sidebar_state')?.value === 'true';
 
-  const businessRows = (businesses ?? []) as BusinessRow[];
-  const cookieBusinessId = cookieStore.get(ACTIVE_BUSINESS_COOKIE)?.value;
-  const initialActiveBusinessId =
-    (cookieBusinessId && businessRows.some((b) => b.id === cookieBusinessId)
-      ? cookieBusinessId
-      : businessRows[0]?.id) ?? null;
+  const initialActiveBusinessId = resolveActiveBusinessId(
+    businesses,
+    cookieStore.get(ACTIVE_BUSINESS_COOKIE)?.value
+  );
 
   return (
     <KBar>
@@ -81,8 +83,8 @@ export default async function DashboardLayout({ children }: { children: React.Re
         </a>
         <AppSidebar
           ownerEmail={user.email ?? ''}
-          profile={(profile as ProfileRow | null) ?? null}
-          businesses={businessRows}
+          profile={profile}
+          businesses={businesses}
           initialActiveBusinessId={initialActiveBusinessId}
         />
         <SidebarInset id='main-content' tabIndex={-1} className='scroll-mt-16'>
