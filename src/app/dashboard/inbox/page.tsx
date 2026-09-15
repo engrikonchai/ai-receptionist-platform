@@ -1,10 +1,9 @@
-import { PlaceholderPage } from '@/components/layout/placeholder-page';
+import { InboxView } from '@/features/inbox/components/inbox-view';
 
 export default function InboxPage() {
   return (
-    <PlaceholderPage
-      title='Inbox'
-      description='The unified inbox for all customer conversations.'
-    />
+    <div className='flex min-h-0 min-w-0 flex-1 px-4 py-2 md:px-6'>
+      <InboxView />
+    </div>
   );
 }
