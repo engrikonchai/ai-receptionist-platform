@@ -1,8 +1,14 @@
 import { Icons } from '@/components/icons';
 import { CHANNEL_ICON, CHANNEL_LABEL } from '../utils/format';
-import type { Channel } from '../utils/types';
+import type { ConversationChannel } from '../api/types';
 
-export function ChannelIcon({ channel, className }: { channel: Channel; className?: string }) {
+export function ChannelIcon({
+  channel,
+  className
+}: {
+  channel: ConversationChannel;
+  className?: string;
+}) {
   const Icon = Icons[CHANNEL_ICON[channel]];
   return (
     <span className='inline-flex items-center gap-1' title={CHANNEL_LABEL[channel]}>

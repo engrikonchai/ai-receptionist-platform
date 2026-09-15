@@ -3,30 +3,35 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Bubble, BubbleContent } from '@/components/ui/bubble';
 import { Message, MessageAvatar, MessageContent, MessageHeader } from '@/components/ui/message';
 import { cn } from '@/lib/utils';
-import type { Message as MessageType } from '../utils/types';
+import { formatTimestamp } from '../utils/format';
+import type { ConversationMessage } from '../api/types';
 
-function SenderIcon({ sender }: { sender: MessageType['sender'] }) {
-  if (sender === 'ai') return <Icons.aiAgent className='size-3.5' aria-hidden='true' />;
-  if (sender === 'human') return <Icons.humanAgent className='size-3.5' aria-hidden='true' />;
+const ROLE_LABEL: Record<ConversationMessage['role'], string> = {
+  user: 'Customer',
+  assistant: 'AI Receptionist',
+  system: 'System'
+};
+
+function RoleIcon({ role }: { role: ConversationMessage['role'] }) {
+  if (role === 'assistant') return <Icons.aiAgent className='size-3.5' aria-hidden='true' />;
+  if (role === 'system') return <Icons.info className='size-3.5' aria-hidden='true' />;
   return <Icons.user className='size-3.5' aria-hidden='true' />;
 }
 
-export function MessageItem({ message }: { message: MessageType }) {
-  if (message.sender === 'system') {
+export function MessageItem({ message }: { message: ConversationMessage }) {
+  if (message.role === 'system') {
     return (
       <div className='flex items-center justify-center gap-1.5 py-1' role='status'>
         <Icons.info className='text-muted-foreground size-3.5 shrink-0' aria-hidden='true' />
         <p className='text-muted-foreground text-center text-xs'>
-          {message.text}
-          <span className='ml-1.5'>· {message.timestamp}</span>
+          {message.content}
+          <span className='ml-1.5'>· {formatTimestamp(message.createdAt)}</span>
         </p>
       </div>
     );
   }
 
-  const isOutgoing = message.sender === 'ai' || message.sender === 'human';
-  const variant =
-    message.sender === 'human' ? 'default' : message.sender === 'ai' ? 'tinted' : 'muted';
+  const isOutgoing = message.role === 'assistant';
 
   return (
     <Message align={isOutgoing ? 'end' : 'start'} className='items-end'>
@@ -38,37 +43,19 @@ export function MessageItem({ message }: { message: MessageType }) {
               isOutgoing ? 'bg-primary/15 text-primary' : 'bg-muted text-foreground'
             )}
           >
-            <SenderIcon sender={message.sender} />
+            <RoleIcon role={message.role} />
           </AvatarFallback>
         </Avatar>
       </MessageAvatar>
       <MessageContent>
         <MessageHeader className={cn('gap-1.5', isOutgoing && 'justify-end')}>
-          <span className='font-medium'>{message.author}</span>
+          <span className='font-medium'>{ROLE_LABEL[message.role]}</span>
           <span aria-hidden='true'>·</span>
-          <span>{message.timestamp}</span>
+          <span>{formatTimestamp(message.createdAt)}</span>
         </MessageHeader>
-        <Bubble variant={variant} align={isOutgoing ? 'end' : 'start'}>
-          <BubbleContent>{message.text}</BubbleContent>
+        <Bubble variant={isOutgoing ? 'tinted' : 'muted'} align={isOutgoing ? 'end' : 'start'}>
+          <BubbleContent>{message.content}</BubbleContent>
         </Bubble>
-        {message.lowConfidence && (
-          <div
-            role='status'
-            className={cn(
-              'border-destructive/30 bg-muted flex max-w-[85%] items-start gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs',
-              isOutgoing ? 'self-end' : 'self-start'
-            )}
-          >
-            <Icons.warning
-              className='text-destructive mt-0.5 size-3.5 shrink-0'
-              aria-hidden='true'
-            />
-            <p className='text-foreground'>
-              <span className='font-medium'>Needs human review</span> — confidence{' '}
-              {message.lowConfidence.confidence}%. {message.lowConfidence.reason}
-            </p>
-          </div>
-        )}
       </MessageContent>
     </Message>
   );

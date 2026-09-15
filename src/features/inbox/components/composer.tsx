@@ -1,65 +1,33 @@
-'use client';
-
-import { FormEvent } from 'react';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { Conversation } from '../utils/types';
 
-export function Composer({
-  conversation,
-  draft,
-  onDraftChange,
-  onSend,
-  onSuggestedReply
-}: {
-  conversation: Conversation;
-  draft: string;
-  onDraftChange: (text: string) => void;
-  onSend: () => void;
-  onSuggestedReply: (text: string) => void;
-}) {
-  const handleSubmit = (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    onSend();
-  };
-
+/**
+ * The schema does not yet support inserting a human-authored message
+ * (see `Unsupported features` in this phase's spec), so the composer is
+ * disabled rather than faked with local-only state that would silently
+ * disappear on refresh. Nothing here is ever saved.
+ */
+export function Composer({ conversationName }: { conversationName: string }) {
   return (
     <div className='bg-card sticky bottom-0 border-t p-3'>
-      {conversation.suggestedReplies.length > 0 && (
-        <div className='mb-2 flex flex-wrap gap-1.5' aria-label='Suggested replies'>
-          {conversation.suggestedReplies.map((reply, index) => (
-            <button
-              key={index}
-              type='button'
-              onClick={() => onSuggestedReply(reply)}
-              className='border-border text-muted-foreground hover:border-primary/40 hover:text-foreground focus-visible:ring-ring focus-visible:ring-offset-background max-w-full truncate rounded-full border px-2.5 py-1 text-xs transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none'
-              title={reply}
-            >
-              {reply}
-            </button>
-          ))}
-        </div>
-      )}
+      <div
+        role='status'
+        className='bg-muted/50 text-muted-foreground mb-2 flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs'
+      >
+        <Icons.lock className='size-3.5 shrink-0' aria-hidden='true' />
+        Human replies will be enabled in the next phase.
+      </div>
 
-      <form onSubmit={handleSubmit} aria-label='Reply composer' className='flex items-end gap-2'>
+      <div className='flex items-end gap-2'>
         <label htmlFor='inbox-composer' className='sr-only'>
-          Write a reply to {conversation.customer.name}
+          Message {conversationName}
         </label>
         <Textarea
           id='inbox-composer'
-          value={draft}
-          onChange={(e) => onDraftChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault();
-              if (draft.trim()) {
-                e.currentTarget.closest('form')?.requestSubmit();
-              }
-            }
-          }}
-          placeholder={`Message ${conversation.customer.name} (Enter to send, Shift+Enter for a new line)`}
+          disabled
+          placeholder='Human replies will be enabled in the next phase'
           rows={2}
           className='max-h-32 min-h-[3rem] flex-1 resize-none'
         />
@@ -80,11 +48,11 @@ export function Composer({
             </TooltipTrigger>
             <TooltipContent>Attachments are coming in a future update</TooltipContent>
           </Tooltip>
-          <Button type='submit' size='icon' disabled={!draft.trim()} aria-label='Send message'>
+          <Button type='button' size='icon' disabled aria-label='Send message'>
             <Icons.send className='size-4' aria-hidden='true' />
           </Button>
         </div>
-      </form>
+      </div>
     </div>
   );
 }

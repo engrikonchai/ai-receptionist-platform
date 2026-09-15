@@ -70,6 +70,7 @@ import {
   IconPizza,
   IconPlus,
   IconProps,
+  IconRefresh,
   IconRobot,
   IconRosetteDiscountCheck,
   IconSearch,
@@ -125,6 +126,7 @@ export const Icons = {
   search: IconSearch,
   settings: IconSettings,
   trash: IconTrash,
+  refresh: IconRefresh,
 
   // Navigation / Chevrons
   chevronDown: IconChevronDown,

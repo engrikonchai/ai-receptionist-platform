@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Icons } from '@/components/icons';
 import {
   DropdownMenu,
@@ -31,6 +32,7 @@ export function BusinessSwitcher({
   // `businesses` only ever contains rows Row Level Security already
   // scoped to the signed-in owner, so any id picked from this list is
   // guaranteed to belong to them — this is the "verify" step.
+  const router = useRouter();
   const [activeId, setActiveId] = useState<string | null>(
     initialActiveBusinessId && businesses.some((b) => b.id === initialActiveBusinessId)
       ? initialActiveBusinessId
@@ -41,8 +43,15 @@ export function BusinessSwitcher({
 
   function handleSelect(businessId: string) {
     if (!businesses.some((b) => b.id === businessId)) return;
+    if (businessId === activeId) return;
     setActiveId(businessId);
     setActiveBusinessCookie(businessId);
+    // Every business-scoped page (Overview, Inbox, ...) resolves the
+    // active business from this cookie on the server, so a plain client
+    // state update wouldn't be enough to make them reflect the new
+    // business — refresh re-runs their Server Components against the
+    // cookie value just written above.
+    router.refresh();
   }
 
   if (!active) {
