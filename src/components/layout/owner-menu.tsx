@@ -1,16 +1,7 @@
 'use client';
 
-/**
- * TEMPORARY MOCK COMPONENT
- * ------------------------
- * Placeholder for the real signed-in user menu. There is no authentication
- * yet — this always shows a fixed "Demo Owner" identity so the dashboard
- * shell has an account affordance in the sidebar footer. The menu items
- * are inert; nothing here reads or writes real session/user data.
- *
- * Replace this once Supabase auth is wired up.
- */
-
+import { useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { Icons } from '@/components/icons';
 import {
   DropdownMenu,
@@ -22,13 +13,23 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
+import { createSupabaseBrowserClient } from '@/lib/supabase/client';
+import type { ProfileRow } from '@/lib/supabase/database.types';
 
-const MOCK_OWNER = {
-  name: 'Demo Owner',
-  email: 'owner@example.com'
-};
+export function OwnerMenu({ email, profile }: { email: string; profile: ProfileRow | null }) {
+  const router = useRouter();
+  const [isSigningOut, setIsSigningOut] = useState(false);
 
-export function MockOwnerMenu() {
+  const displayName = profile?.display_name?.trim() || email || 'Account';
+
+  async function handleSignOut() {
+    setIsSigningOut(true);
+    const supabase = createSupabaseBrowserClient();
+    await supabase?.auth.signOut();
+    router.push('/login');
+    router.refresh();
+  }
+
   return (
     <SidebarMenu>
       <SidebarMenuItem>
@@ -45,8 +46,8 @@ export function MockOwnerMenu() {
               <Icons.user2 className='size-4' />
             </div>
             <div className='grid flex-1 text-left text-sm leading-tight'>
-              <span className='truncate font-medium'>{MOCK_OWNER.name}</span>
-              <span className='text-muted-foreground truncate text-xs'>{MOCK_OWNER.email}</span>
+              <span className='truncate font-medium'>{displayName}</span>
+              <span className='text-muted-foreground truncate text-xs'>{email}</span>
             </div>
             <Icons.chevronsDown className='ml-auto size-4' />
           </DropdownMenuTrigger>
@@ -59,20 +60,16 @@ export function MockOwnerMenu() {
             <DropdownMenuGroup>
               <DropdownMenuLabel className='p-0 font-normal'>
                 <div className='flex flex-col space-y-1 px-1 py-1.5'>
-                  <p className='text-sm leading-none font-medium'>{MOCK_OWNER.name}</p>
-                  <p className='text-muted-foreground text-xs leading-none'>{MOCK_OWNER.email}</p>
+                  <p className='text-sm leading-none font-medium'>{displayName}</p>
+                  <p className='text-muted-foreground text-xs leading-none'>{email}</p>
                 </div>
               </DropdownMenuLabel>
             </DropdownMenuGroup>
             <DropdownMenuSeparator />
             <DropdownMenuGroup>
-              <DropdownMenuItem disabled>
-                Profile
-                <span className='text-muted-foreground ml-auto text-xs'>Not available yet</span>
-              </DropdownMenuItem>
-              <DropdownMenuItem disabled>
-                Sign out
-                <span className='text-muted-foreground ml-auto text-xs'>No auth yet</span>
+              <DropdownMenuItem onClick={handleSignOut} disabled={isSigningOut}>
+                <Icons.logout className='size-4' aria-hidden='true' />
+                {isSigningOut ? 'Signing out…' : 'Sign out'}
               </DropdownMenuItem>
             </DropdownMenuGroup>
           </DropdownMenuContent>
