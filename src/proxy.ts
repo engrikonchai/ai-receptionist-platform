@@ -1,17 +1,7 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { createServerClient } from '@supabase/ssr';
 import { getPublicSupabaseEnv } from '@/lib/supabase/env';
-
-const DEFAULT_REDIRECT = '/dashboard/overview';
-
-/**
- * Only ever redirect to a path inside this app — never an absolute URL
- * or a protocol-relative one (`//evil.example`), which a browser will
- * still treat as external.
- */
-function isSafeInternalPath(path: string | null): path is string {
-  return Boolean(path) && path!.startsWith('/') && !path!.startsWith('//');
-}
+import { DEFAULT_REDIRECT_PATH, resolveSafeNextPath } from '@/lib/safe-redirect';
 
 /**
  * Runs on every request to an auth-relevant route. Two jobs:
@@ -68,8 +58,7 @@ export async function proxy(request: NextRequest) {
   }
 
   if (user && isAuthPage) {
-    const next = searchParams.get('next');
-    const target = isSafeInternalPath(next) ? next : DEFAULT_REDIRECT;
+    const target = resolveSafeNextPath(searchParams.get('next'), DEFAULT_REDIRECT_PATH);
     return NextResponse.redirect(new URL(target, request.url));
   }
 

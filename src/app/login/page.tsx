@@ -4,6 +4,7 @@ import { AuthShell } from '@/features/auth/components/auth-shell';
 import { LoginForm } from '@/features/auth/components/login-form';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured } from '@/lib/supabase/env';
+import { resolveSafeNextPath } from '@/lib/safe-redirect';
 
 export const metadata: Metadata = {
   title: 'Sign in'
@@ -11,20 +12,13 @@ export const metadata: Metadata = {
 
 export const dynamic = 'force-dynamic';
 
-const DEFAULT_REDIRECT = '/dashboard/overview';
-
-function safeNextPath(next: string | undefined): string {
-  if (!next || !next.startsWith('/') || next.startsWith('//')) return DEFAULT_REDIRECT;
-  return next;
-}
-
 export default async function LoginPage({
   searchParams
 }: {
-  searchParams: Promise<{ next?: string }>;
+  searchParams: Promise<{ next?: string; error?: string }>;
 }) {
-  const { next } = await searchParams;
-  const target = safeNextPath(next);
+  const { next, error } = await searchParams;
+  const target = resolveSafeNextPath(next);
 
   if (isSupabaseConfigured()) {
     const supabase = await createSupabaseServerClient();
@@ -38,7 +32,7 @@ export default async function LoginPage({
 
   return (
     <AuthShell title='Sign in' description='Sign in to manage your business.'>
-      <LoginForm next={target} />
+      <LoginForm next={target} initialError={error} />
     </AuthShell>
   );
 }
