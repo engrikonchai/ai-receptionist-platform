@@ -4,7 +4,8 @@ import type {
   HandoffStatus,
   LeadSource,
   LeadStatus,
-  MessageRole
+  MessageRole,
+  MessageSenderType
 } from '@/lib/supabase/database.types';
 
 export type {
@@ -13,7 +14,8 @@ export type {
   HandoffStatus,
   LeadSource,
   LeadStatus,
-  MessageRole
+  MessageRole,
+  MessageSenderType
 };
 
 export type InboxStatusFilter = 'all' | ConversationStatus;
@@ -29,6 +31,12 @@ export type InboxStatusFilter = 'all' | ConversationStatus;
 export const SESSION_EXPIRED_MESSAGE = 'Your session has expired. Please sign in again.';
 export const NO_BUSINESS_ACCESS_MESSAGE =
   "We couldn't find that business, or you don't have access to it.";
+
+/** Shared, exact error copy for sendHumanReply()'s failure modes. */
+export const CONVERSATION_UNAVAILABLE_ERROR = 'This conversation is no longer available.';
+export const CONVERSATION_CLOSED_ERROR = 'This conversation is resolved. Reopen it to reply.';
+export const TAKE_OVER_REQUIRED_ERROR = 'Take over this conversation before sending a reply.';
+export const GENERIC_SEND_ERROR = 'Something went wrong sending your message. Please try again.';
 
 /** One row in the conversation list — never carries the raw visitor id. */
 export type ConversationListItem = {
@@ -53,11 +61,22 @@ export type ConversationMessage = {
   role: MessageRole;
   content: string;
   createdAt: string;
+  /**
+   * Only meaningful when role === 'assistant': 'human' means a business
+   * owner sent it from the Inbox, 'ai' means the AI receptionist
+   * (already resolved from a null DB value for backward compatibility —
+   * see MessageSenderType). Always null for role 'user' or 'system'.
+   */
+  senderType: MessageSenderType | null;
 };
 
 export type ConversationMessagesResult =
   | { status: 'ok'; messages: ConversationMessage[] }
   | { status: 'not_found' };
+
+export type SendHumanReplyResult =
+  | { success: true; message: ConversationMessage }
+  | { success: false; error: string };
 
 export type LeadDetails = {
   name: string;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, type UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
@@ -56,12 +56,17 @@ function MessageSkeleton() {
 function runAction(
   mutation: UseMutationResult<ConversationActionResult, Error, string>,
   conversationId: string,
-  successMessage: string
+  successMessage: string,
+  onSuccess?: () => void
 ) {
   mutation.mutate(conversationId, {
     onSuccess: (result) => {
-      if (result.success) toast.success(successMessage);
-      else toast.error(result.error);
+      if (result.success) {
+        toast.success(successMessage);
+        onSuccess?.();
+      } else {
+        toast.error(result.error);
+      }
     },
     onError: () => toast.error('Something went wrong. Please try again.')
   });
@@ -80,6 +85,7 @@ export function ActiveConversationPanel({
 }) {
   const setMobileView = useInboxStore((state) => state.setMobileView);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const [composerFocusSignal, setComposerFocusSignal] = useState(0);
 
   const messagesQuery = useQuery(conversationMessagesOptions(businessId, conversation.id));
   const takeOver = useMutation(takeOverMutation(businessId));
@@ -161,7 +167,9 @@ export function ActiveConversationPanel({
               size='sm'
               disabled={anyActionPending}
               onClick={() =>
-                runAction(takeOver, conversation.id, 'You took over this conversation.')
+                runAction(takeOver, conversation.id, 'You took over this conversation.', () =>
+                  setComposerFocusSignal((signal) => signal + 1)
+                )
               }
             >
               <Icons.humanAgent className='size-3.5' aria-hidden='true' />
@@ -266,7 +274,18 @@ export function ActiveConversationPanel({
         ))}
       </div>
 
-      <Composer conversationName={conversation.displayName} />
+      <Composer
+        businessId={businessId}
+        conversationId={conversation.id}
+        conversationName={conversation.displayName}
+        canSend={conversation.humanTakeover && conversation.status !== 'closed'}
+        disabledReason={
+          conversation.status === 'closed'
+            ? 'Reopen this conversation to send a reply.'
+            : 'Take over this conversation to send a reply — the AI receptionist is currently handling it.'
+        }
+        focusSignal={composerFocusSignal}
+      />
     </Card>
   );
 }

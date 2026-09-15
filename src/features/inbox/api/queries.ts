@@ -27,6 +27,7 @@ import {
   reopenConversation,
   resolveConversation,
   returnToAIConversation,
+  sendHumanReply,
   takeOverConversation
 } from './service';
 import type { ConversationActionResult } from './types';
@@ -97,4 +98,22 @@ export function resolveConversationMutation(businessId: string) {
 
 export function reopenConversationMutation(businessId: string) {
   return conversationActionMutation(reopenConversation, businessId);
+}
+
+export function sendHumanReplyMutation(businessId: string) {
+  return mutationOptions({
+    mutationFn: (input: { conversationId: string; content: string; clientMessageId: string }) =>
+      sendHumanReply({ businessId, ...input }),
+    onSuccess: (result, variables) => {
+      if (!result.success) return;
+      const queryClient = getQueryClient();
+      // The new message and the list's latest-message preview both need
+      // a fresh read — nothing here relies on a component still being
+      // mounted to pick it up.
+      void queryClient.invalidateQueries({
+        queryKey: inboxKeys.messages(businessId, variables.conversationId)
+      });
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversations(businessId) });
+    }
+  });
 }

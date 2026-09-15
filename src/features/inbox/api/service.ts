@@ -7,14 +7,23 @@ import type {
   LeadRow,
   MessageRow
 } from '@/lib/supabase/database.types';
+import { sendHumanReplySchema } from '../schemas/send-human-reply';
 import { maskVisitorId, neutralVisitorName } from '../utils/mask';
 import { verifyActiveBusiness } from './authorize';
+import {
+  CONVERSATION_CLOSED_ERROR,
+  CONVERSATION_UNAVAILABLE_ERROR,
+  GENERIC_SEND_ERROR,
+  TAKE_OVER_REQUIRED_ERROR
+} from './types';
 import type {
   ConversationActionResult,
   ConversationListItem,
+  ConversationMessage,
   ConversationMessagesResult,
   HandoffResult,
-  LeadResult
+  LeadResult,
+  SendHumanReplyResult
 } from './types';
 
 const CONVERSATION_LIST_LIMIT = 50;
@@ -176,22 +185,33 @@ export async function fetchConversationMessages(
 
   const { data: messages, error } = await supabase
     .from('messages')
-    .select('id, role, content, created_at')
+    .select('id, role, content, sender_type, created_at')
     .eq('conversation_id', conversationId)
     .order('created_at', { ascending: true });
 
   if (error) throw new Error('We could not load this conversation. Please try again.');
 
-  const rows = (messages ?? []) as Pick<MessageRow, 'id' | 'role' | 'content' | 'created_at'>[];
+  const rows = (messages ?? []) as Pick<
+    MessageRow,
+    'id' | 'role' | 'content' | 'sender_type' | 'created_at'
+  >[];
 
   return {
     status: 'ok',
-    messages: rows.map((message) => ({
-      id: message.id,
-      role: message.role,
-      content: message.content,
-      createdAt: message.created_at
-    }))
+    messages: rows.map((message) => toConversationMessage(message))
+  };
+}
+
+/** Resolves the null-means-AI backward-compatibility rule in exactly one place. */
+function toConversationMessage(
+  message: Pick<MessageRow, 'id' | 'role' | 'content' | 'sender_type' | 'created_at'>
+): ConversationMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.created_at,
+    senderType: message.role === 'assistant' ? (message.sender_type ?? 'ai') : null
   };
 }
 
@@ -329,4 +349,99 @@ export async function reopenConversation(
   conversationId: string
 ): Promise<ConversationActionResult> {
   return updateConversation(businessId, conversationId, { status: 'open' });
+}
+
+/** Postgres unique_violation — see messages_client_message_id_key in the migration. */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * Inserts a human-authored reply into a conversation the signed-in
+ * owner has taken over. Every guard here is redundant with the
+ * database's own `messages_insert_owner_human_reply` RLS policy (same
+ * business-ownership check, same role/sender_type shape) — this
+ * function exists to return a specific, friendly error for each
+ * failure instead of a generic RLS-denied 403, not to be the only line
+ * of defense. Never uses the service-role key.
+ */
+export async function sendHumanReply(input: {
+  businessId: string;
+  conversationId: string;
+  content: string;
+  clientMessageId: string;
+}): Promise<SendHumanReplyResult> {
+  // Authenticate and verify the active business first — a business id
+  // is never trusted just because the browser sent one;
+  // verifyActiveBusiness re-checks it against the signed-in owner's own
+  // RLS-scoped businesses list, exactly like every other inbox action.
+  const verified = await verifyActiveBusiness(input.businessId);
+  if (!verified.ok) return { success: false, error: verified.error };
+  const { supabase, businessId: verifiedId } = verified.ctx;
+
+  const parsed = sendHumanReplySchema.safeParse({
+    conversationId: input.conversationId,
+    clientMessageId: input.clientMessageId,
+    content: input.content
+  });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0]?.message ?? GENERIC_SEND_ERROR };
+  }
+
+  const { data: conversation, error: conversationError } = await supabase
+    .from('conversations')
+    .select('id, status, human_takeover')
+    .eq('business_id', verifiedId)
+    .eq('id', parsed.data.conversationId)
+    .maybeSingle();
+
+  if (conversationError) return { success: false, error: GENERIC_SEND_ERROR };
+  if (!conversation) return { success: false, error: CONVERSATION_UNAVAILABLE_ERROR };
+
+  const conversationRow = conversation as Pick<ConversationRow, 'id' | 'status' | 'human_takeover'>;
+  if (conversationRow.status === 'closed') {
+    return { success: false, error: CONVERSATION_CLOSED_ERROR };
+  }
+  if (!conversationRow.human_takeover) {
+    return { success: false, error: TAKE_OVER_REQUIRED_ERROR };
+  }
+
+  const { data: inserted, error: insertError } = await supabase
+    .from('messages')
+    .insert({
+      conversation_id: parsed.data.conversationId,
+      role: 'assistant',
+      sender_type: 'human',
+      content: parsed.data.content,
+      client_message_id: parsed.data.clientMessageId
+    })
+    .select('id, role, content, sender_type, created_at')
+    .single();
+
+  if (insertError) {
+    if (insertError.code === UNIQUE_VIOLATION) {
+      // The same client_message_id was already inserted — a double
+      // click, or a retry after a response that actually succeeded but
+      // never reached the browser. Return the row that won instead of
+      // erroring, so a retry can never create a second message.
+      const { data: existing } = await supabase
+        .from('messages')
+        .select('id, role, content, sender_type, created_at')
+        .eq('client_message_id', parsed.data.clientMessageId)
+        .maybeSingle();
+
+      if (existing) {
+        const row = existing as Pick<
+          MessageRow,
+          'id' | 'role' | 'content' | 'sender_type' | 'created_at'
+        >;
+        return { success: true, message: toConversationMessage(row) };
+      }
+    }
+    return { success: false, error: GENERIC_SEND_ERROR };
+  }
+
+  const row = inserted as Pick<
+    MessageRow,
+    'id' | 'role' | 'content' | 'sender_type' | 'created_at'
+  >;
+  return { success: true, message: toConversationMessage(row) };
 }
