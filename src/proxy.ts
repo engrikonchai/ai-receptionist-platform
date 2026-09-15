@@ -19,6 +19,12 @@ import { getPublicSupabaseEnv } from '@/lib/supabase/env';
  * dashboard/layout.tsx) — which is the real security boundary anyway.
  * Per Next.js's own guidance, Proxy should never be relied on as the
  * sole authorization mechanism.
+ *
+ * `/forgot-password` and `/reset-password` are matched for the same
+ * cookie-refresh reason as `/login`/`/signup` — they stay outside
+ * `isProtectedRoute` below and are never redirected, i.e. fully public.
+ * `/reset-password`'s own auth check (a valid recovery session) is done
+ * by its Server Component, not here — see reset-password/page.tsx.
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -63,5 +69,13 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard', '/dashboard/:path*', '/onboarding', '/login', '/signup']
+  matcher: [
+    '/dashboard',
+    '/dashboard/:path*',
+    '/onboarding',
+    '/login',
+    '/signup',
+    '/forgot-password',
+    '/reset-password'
+  ]
 };

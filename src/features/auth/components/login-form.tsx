@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { Icons } from '@/components/icons';
 import { FieldGroup } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
@@ -13,7 +14,16 @@ import { SupabaseConfigNotice } from './supabase-config-notice';
 /** Generic on purpose — never reveals whether the email exists. */
 const INCORRECT_CREDENTIALS_MESSAGE = 'Incorrect email or password.';
 
-export function LoginForm({ next, initialError }: { next: string; initialError?: string }) {
+export function LoginForm({
+  next,
+  initialError,
+  successMessage
+}: {
+  next: string;
+  initialError?: string;
+  /** e.g. after a successful password reset — rendered distinctly from `formError`, never as an alert. */
+  successMessage?: string;
+}) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(initialError ?? null);
 
@@ -53,6 +63,16 @@ export function LoginForm({ next, initialError }: { next: string; initialError?:
 
   return (
     <div className='space-y-4'>
+      {successMessage && (
+        <div
+          role='status'
+          className='border-primary/30 bg-primary/10 flex items-start gap-2.5 rounded-lg border p-3 text-sm'
+        >
+          <Icons.circleCheck className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
+          <p className='text-foreground'>{successMessage}</p>
+        </div>
+      )}
+
       <form
         noValidate
         onSubmit={(e) => {
@@ -84,6 +104,14 @@ export function LoginForm({ next, initialError }: { next: string; initialError?:
               />
             )}
           />
+          <div className='flex justify-end'>
+            <Link
+              href='/forgot-password'
+              className='text-muted-foreground hover:text-foreground text-xs underline underline-offset-4'
+            >
+              Forgot password?
+            </Link>
+          </div>
           {formError && (
             <p role='alert' className='text-destructive text-sm'>
               {formError}

@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
 import { AuthShell } from '@/features/auth/components/auth-shell';
 import { LoginForm } from '@/features/auth/components/login-form';
+import { PASSWORD_RESET_SUCCESS_MESSAGE } from '@/features/auth/messages';
 import { isSupabaseConfigured } from '@/lib/supabase/env';
 import { loadOwnerContext } from '@/lib/supabase/owner-context';
 import { resolveSafeNextPath } from '@/lib/safe-redirect';
@@ -15,9 +16,9 @@ export const dynamic = 'force-dynamic';
 export default async function LoginPage({
   searchParams
 }: {
-  searchParams: Promise<{ next?: string; error?: string }>;
+  searchParams: Promise<{ next?: string; error?: string; passwordReset?: string }>;
 }) {
-  const { next, error } = await searchParams;
+  const { next, error, passwordReset } = await searchParams;
   const target = resolveSafeNextPath(next);
 
   if (isSupabaseConfigured()) {
@@ -35,7 +36,11 @@ export default async function LoginPage({
 
   return (
     <AuthShell title='Sign in' description='Sign in to manage your business.'>
-      <LoginForm next={target} initialError={error} />
+      <LoginForm
+        next={target}
+        initialError={error}
+        successMessage={passwordReset === 'success' ? PASSWORD_RESET_SUCCESS_MESSAGE : undefined}
+      />
     </AuthShell>
   );
 }
