@@ -9,6 +9,8 @@ import { Icons } from '@/components/icons';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
+import { getSiteUrl } from '@/lib/site-url';
+import { DEFAULT_REDIRECT_PATH } from '@/lib/safe-redirect';
 import { signupSchema } from '../schemas/auth';
 import { SupabaseConfigNotice } from './supabase-config-notice';
 
@@ -31,7 +33,13 @@ export function SignupForm() {
       const { data, error } = await supabase.auth.signUp({
         email: value.email,
         password: value.password,
-        options: { data: { display_name: value.displayName } }
+        options: {
+          data: { display_name: value.displayName },
+          // Absolute URL Supabase embeds in the confirmation email — the
+          // callback route below exchanges its `code` for a session and
+          // lands the owner on the dashboard.
+          emailRedirectTo: `${getSiteUrl()}/auth/callback?next=${encodeURIComponent(DEFAULT_REDIRECT_PATH)}`
+        }
       });
 
       if (error) {

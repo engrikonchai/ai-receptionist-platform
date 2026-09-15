@@ -13,9 +13,9 @@ import { SupabaseConfigNotice } from './supabase-config-notice';
 /** Generic on purpose — never reveals whether the email exists. */
 const INCORRECT_CREDENTIALS_MESSAGE = 'Incorrect email or password.';
 
-export function LoginForm({ next }: { next: string }) {
+export function LoginForm({ next, initialError }: { next: string; initialError?: string }) {
   const router = useRouter();
-  const [formError, setFormError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(initialError ?? null);
 
   const form = useAppForm({
     defaultValues: { email: '', password: '' },
