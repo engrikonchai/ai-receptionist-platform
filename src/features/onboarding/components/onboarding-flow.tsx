@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useRouter } from 'next/navigation';
 import { revalidateLogic, useStore } from '@tanstack/react-form';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
@@ -39,7 +38,6 @@ const STEP_DESCRIPTIONS = [
 ];
 
 export function OnboardingFlow({ defaultValues }: { defaultValues: OnboardingDefaults }) {
-  const router = useRouter();
   const [submitError, setSubmitError] = useState<string | null>(null);
 
   const {
@@ -60,13 +58,15 @@ export function OnboardingFlow({ defaultValues }: { defaultValues: OnboardingDef
     },
     onSubmit: async ({ value }) => {
       setSubmitError(null);
+      // On success, completeOnboarding() redirects server-side (see its
+      // own comment) by throwing — it never resolves with a value in
+      // that case. So actually getting a result back here always means
+      // it did NOT succeed; there is deliberately no success branch to
+      // navigate from client-side.
       const result = await completeOnboarding(value);
       if (!result.success) {
         setSubmitError(result.error);
-        return;
       }
-      router.push('/dashboard/overview');
-      router.refresh();
     }
   });
 
