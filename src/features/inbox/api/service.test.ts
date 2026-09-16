@@ -62,6 +62,10 @@ function mockVerifiedBusiness(from: ReturnType<typeof vi.fn>) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // service.ts logs safe, temporary diagnostics (see logInboxQueryDiagnostic)
+  // on every fetchConversations call — silence them so test output stays
+  // readable; the diagnostics' content itself isn't what these tests verify.
+  vi.spyOn(console, 'error').mockImplementation(() => {});
 });
 
 describe('fetchConversations', () => {
@@ -184,6 +188,126 @@ describe('fetchConversations', () => {
     await expect(fetchConversations('biz-1')).rejects.toThrow(
       'We could not load conversations. Please try again.'
     );
+  });
+
+  /**
+   * Regression test for the "Inbox shows 0 conversations despite RLS
+   * returning 5 rows" investigation: the primary conversations query can
+   * succeed with real rows while one enrichment query (messages, leads,
+   * or handoffs) fails — e.g. a table whose RLS policy isn't applied yet
+   * in a given environment. That must degrade gracefully (drop just that
+   * enrichment, e.g. no lead name or handoff status) instead of losing
+   * every conversation the primary query already found.
+   */
+  it('still returns every conversation when the leads enrichment query fails, degrading gracefully instead of discarding the list', async () => {
+    const conversationRow = {
+      id: 'conv-1',
+      business_id: VERIFIED_BUSINESS_ID,
+      visitor_id: 'visitor-1',
+      channel: 'website',
+      detected_language: 'en',
+      status: 'open',
+      human_takeover: false,
+      lead_created: true,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z'
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: [conversationRow], error: null })) // conversations
+      .mockReturnValueOnce(chainable({ data: [], error: null })) // messages
+      .mockReturnValueOnce(
+        chainable({
+          data: null,
+          error: { code: '42501', message: 'permission denied for table leads' }
+        })
+      ) // leads — fails
+      .mockReturnValueOnce(chainable({ data: [], error: null })); // handoffs
+
+    mockVerifiedBusiness(from);
+
+    const result = await fetchConversations('biz-1');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('conv-1');
+    expect(result[0].hasLeadName).toBe(false);
+    expect(result[0].leadContact).toBeNull();
+  });
+
+  it('still returns every conversation when the messages and handoffs enrichment queries also fail', async () => {
+    const conversationRow = {
+      id: 'conv-1',
+      business_id: VERIFIED_BUSINESS_ID,
+      visitor_id: 'visitor-1',
+      channel: 'website',
+      detected_language: 'en',
+      status: 'open',
+      human_takeover: false,
+      lead_created: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z'
+    };
+    const dbError = { code: '42501', message: 'permission denied' };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: [conversationRow], error: null })) // conversations
+      .mockReturnValueOnce(chainable({ data: null, error: dbError })) // messages — fails
+      .mockReturnValueOnce(chainable({ data: null, error: dbError })) // leads — fails
+      .mockReturnValueOnce(chainable({ data: null, error: dbError })); // handoffs — fails
+
+    mockVerifiedBusiness(from);
+
+    const result = await fetchConversations('biz-1');
+
+    expect(result).toHaveLength(1);
+    expect(result[0].id).toBe('conv-1');
+    expect(result[0].latestMessagePreview).toBeNull();
+    expect(result[0].handoffStatus).toBeNull();
+  });
+
+  /**
+   * Regression test using the exact ids from the reported production
+   * case: a business with 5 conversations, visible through RLS, must
+   * come back as 5 items — not the empty array the production bug
+   * showed.
+   */
+  it('returns all 5 conversations for the reported business — the exact production regression', async () => {
+    const REPORTED_BUSINESS_ID = 'c35003d0-6956-47d2-9f9b-1fc1dc10090b';
+    const conversationRows = Array.from({ length: 5 }, (_, i) => ({
+      id: `conv-${i + 1}`,
+      business_id: REPORTED_BUSINESS_ID,
+      visitor_id: `visitor-${i + 1}`,
+      channel: 'website',
+      detected_language: 'en',
+      status: 'open',
+      human_takeover: false,
+      lead_created: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z'
+    }));
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: conversationRows, error: null })) // conversations
+      .mockReturnValueOnce(chainable({ data: [], error: null })) // messages
+      .mockReturnValueOnce(chainable({ data: [], error: null })) // leads
+      .mockReturnValueOnce(chainable({ data: [], error: null })); // handoffs
+
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: {
+        supabase: { from } as unknown as SupabaseClient,
+        user: stubUser,
+        businessId: REPORTED_BUSINESS_ID
+      }
+    });
+
+    const result = await fetchConversations(REPORTED_BUSINESS_ID);
+
+    expect(result).toHaveLength(5);
+    expect(result.map((c) => c.id)).toEqual(['conv-1', 'conv-2', 'conv-3', 'conv-4', 'conv-5']);
   });
 });
 
