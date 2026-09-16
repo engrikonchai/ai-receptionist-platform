@@ -1,30 +1,43 @@
 import { createSupabasePublicClient } from '@/lib/supabase/public';
-import type { WidgetPublicConfigRow } from '@/lib/supabase/database.types';
+import type { WidgetPublicConfigRpcResult } from '@/lib/supabase/database.types';
+import { normalizeOrigin } from './origin';
 
 /**
- * Loads the one safe, narrow row the public widget/chat proxy needs to
- * validate a request — via the anon key only, through
- * `public.widget_public_config` (see
- * supabase/migrations/20260916120000_widget_allowed_origins.sql). Never
- * the service-role key, never a wider table read. Returns `null` for
- * anything that isn't a real widget id — callers turn that into the
- * same generic response ChatbotDemo's own widget-service.ts uses, so a
- * caller can't distinguish "wrong id" from "disabled business".
+ * Loads the one safe, narrow row the public widget's cosmetic-config
+ * endpoint needs — via the anon key, calling
+ * `public.resolve_widget_config(p_widget_id, p_origin)` (see
+ * supabase/migrations/20260916120000_widget_allowed_origins.sql).
+ * Never the service-role key, never a table/view read anon could query
+ * unfiltered — a SECURITY DEFINER function that requires both a widget
+ * id AND the caller's own exact, allow-listed origin as arguments has no
+ * "list everything" equivalent.
+ *
+ * Returns `null` for anything that isn't "a real widget, active
+ * business, enabled widget, and exactly this origin allow-listed" — the
+ * function's own WHERE clause already collapses "unknown id",
+ * "disabled", and "wrong origin" into the same empty result, so a
+ * caller here can't distinguish them either. `originHeader` must be the
+ * request's real `Origin` header, normalized the same way it's stored
+ * (see src/lib/public-widget/origin.ts) — an origin that fails to
+ * normalize never reaches the database at all.
  */
 export async function fetchWidgetPublicConfig(
-  publicWidgetId: string
-): Promise<WidgetPublicConfigRow | null> {
+  publicWidgetId: string,
+  originHeader: string | null
+): Promise<WidgetPublicConfigRpcResult | null> {
+  const normalizedOrigin = originHeader ? normalizeOrigin(originHeader) : null;
+  if (!normalizedOrigin) return null;
+
   const supabase = createSupabasePublicClient();
   if (!supabase) return null;
 
   const { data, error } = await supabase
-    .from('widget_public_config')
-    .select(
-      'public_widget_id, business_active, supported_languages, default_language, title, welcome_message_en, welcome_message_me, welcome_message_ru, primary_color, position, widget_enabled, human_handoff_enabled, allowed_origins'
-    )
-    .eq('public_widget_id', publicWidgetId)
+    .rpc('resolve_widget_config', {
+      p_widget_id: publicWidgetId,
+      p_origin: normalizedOrigin
+    })
     .maybeSingle();
 
   if (error || !data) return null;
-  return data as WidgetPublicConfigRow;
+  return data as WidgetPublicConfigRpcResult;
 }

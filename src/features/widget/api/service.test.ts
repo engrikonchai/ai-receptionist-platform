@@ -57,9 +57,9 @@ const widgetRow = {
   welcome_message_ru: null,
   primary_color: '#1677ff',
   position: 'bottom-right',
-  mock_ai_enabled: true,
+  widget_enabled: true,
   human_handoff_enabled: true,
-  allowed_origins: ['example.com']
+  allowed_origins: ['https://example.com']
 };
 
 const validInput: WidgetSettingsInput = {
@@ -122,7 +122,7 @@ describe('fetchWidgetSettings', () => {
       supportedLanguages: ['en', 'me'],
       humanHandoffEnabled: true,
       handoffEmail: 'owner@example.com',
-      allowedOrigins: ['example.com']
+      allowedOrigins: ['https://example.com']
     });
     expect(result.defaultLanguage).toBe('en');
   });

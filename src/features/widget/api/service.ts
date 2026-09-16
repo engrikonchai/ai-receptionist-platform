@@ -11,7 +11,7 @@ const WIDGET_PATH = '/dashboard/widget';
 
 const BUSINESS_SELECT = 'public_widget_id, supported_languages, default_language, handoff_email';
 const WIDGET_SELECT =
-  'title, welcome_message_en, welcome_message_me, welcome_message_ru, primary_color, position, mock_ai_enabled, human_handoff_enabled, allowed_origins';
+  'title, welcome_message_en, welcome_message_me, welcome_message_ru, primary_color, position, widget_enabled, human_handoff_enabled, allowed_origins';
 
 type BusinessSelectRow = Pick<
   BusinessRow,
@@ -25,7 +25,7 @@ type WidgetSelectRow = Pick<
   | 'welcome_message_ru'
   | 'primary_color'
   | 'position'
-  | 'mock_ai_enabled'
+  | 'widget_enabled'
   | 'human_handoff_enabled'
   | 'allowed_origins'
 >;
@@ -33,7 +33,7 @@ type WidgetSelectRow = Pick<
 function toWidgetSettings(business: BusinessSelectRow, widget: WidgetSelectRow): WidgetSettings {
   return {
     publicWidgetId: business.public_widget_id,
-    enabled: widget.mock_ai_enabled,
+    enabled: widget.widget_enabled,
     assistantName: widget.title,
     welcomeMessageEn: widget.welcome_message_en ?? '',
     welcomeMessageMe: widget.welcome_message_me ?? '',
@@ -118,7 +118,7 @@ export async function saveWidgetSettings(
       welcome_message_ru: value.welcomeMessageRu,
       primary_color: value.primaryColor,
       position: value.position,
-      mock_ai_enabled: value.enabled,
+      widget_enabled: value.enabled,
       human_handoff_enabled: value.humanHandoffEnabled,
       allowed_origins: value.allowedOrigins
     })

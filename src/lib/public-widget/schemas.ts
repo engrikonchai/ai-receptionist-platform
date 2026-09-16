@@ -1,15 +1,14 @@
 import * as z from 'zod';
 
 /**
- * Mirrors ChatbotDemo's own `lib/validation/widget.ts` request shapes
- * exactly (`widgetSessionRequestSchema` / `widgetMessageRequestSchema`)
- * — the proxy forwards these fields verbatim, so the contract must stay
- * byte-identical. This is intentionally a separate, duplicated copy
- * (not imported cross-repo, which isn't possible anyway) — validating
- * here lets the proxy reject obviously-malformed requests before ever
- * reaching the widget_public_config lookup or the upstream runtime, but
- * ChatbotDemo's own schema remains the authoritative validator for
- * anything that reaches it.
+ * The public widget runtime's own authoritative request schemas (see
+ * src/lib/public-widget/runtime.ts) — validating here rejects
+ * obviously-malformed requests (missing fields, an over-length message,
+ * a non-UUID id) before ever resolving a widget or touching the
+ * database. `message`'s 2000-character cap is this app's actual
+ * abuse-protection boundary for message length; see
+ * src/lib/public-widget/http.ts for the separate raw-body-size cap
+ * enforced even before this schema runs.
  */
 const publicWidgetIdSchema = z.uuid({ message: 'Invalid widget id.' });
 const conversationIdSchema = z.uuid({ message: 'Invalid conversation id.' });

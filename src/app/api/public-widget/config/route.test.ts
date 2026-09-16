@@ -1,74 +1,76 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WidgetPublicConfigRow } from '@/lib/supabase/database.types';
+import type { WidgetPublicConfigRpcResult } from '@/lib/supabase/database.types';
 import { GET } from './route';
 
-const fetchWidgetPublicConfig = vi.fn<(id: string) => Promise<WidgetPublicConfigRow | null>>();
+const fetchWidgetPublicConfig =
+  vi.fn<(id: string, origin: string | null) => Promise<WidgetPublicConfigRpcResult | null>>();
 
 vi.mock('@/lib/public-widget/config', () => ({
-  fetchWidgetPublicConfig: (id: string) => fetchWidgetPublicConfig(id)
+  fetchWidgetPublicConfig: (id: string, origin: string | null) =>
+    fetchWidgetPublicConfig(id, origin)
 }));
 
-function config(overrides: Partial<WidgetPublicConfigRow> = {}): WidgetPublicConfigRow {
+function config(overrides: Partial<WidgetPublicConfigRpcResult> = {}): WidgetPublicConfigRpcResult {
   return {
-    public_widget_id: 'widget-1',
-    business_active: true,
-    supported_languages: ['en', 'me'],
-    default_language: 'en',
     title: 'Adria Assistant',
     welcome_message_en: 'Hi!',
     welcome_message_me: null,
     welcome_message_ru: null,
     primary_color: '#1677ff',
     position: 'bottom-right',
-    widget_enabled: true,
     human_handoff_enabled: true,
-    allowed_origins: ['example.com'],
+    default_language: 'en',
+    supported_languages: ['en'],
     ...overrides
   };
 }
 
 function request(widgetId: string | null, origin: string | null = 'https://example.com'): Request {
   const url = new URL('https://platform.example/api/public-widget/config');
-  if (widgetId) url.searchParams.set('widgetId', widgetId);
+  if (widgetId !== null) url.searchParams.set('widgetId', widgetId);
   const headers: Record<string, string> = {};
   if (origin) headers.origin = origin;
   return new Request(url, { headers });
 }
+
+const WIDGET_ID = '11111111-1111-4111-8111-111111111111';
 
 beforeEach(() => {
   fetchWidgetPublicConfig.mockReset();
 });
 
 describe('GET /api/public-widget/config', () => {
-  it('rejects a request with no widgetId query param', async () => {
+  it('returns 400 for a missing widgetId', async () => {
     const response = await GET(request(null));
     expect(response.status).toBe(400);
     expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
   });
 
-  it('returns a generic 404 for an unknown widget id', async () => {
+  it('returns enabled: false, indistinguishable from every other failure reason, for an unknown widget id', async () => {
     fetchWidgetPublicConfig.mockResolvedValue(null);
-    const response = await GET(request('unknown'));
-    expect(response.status).toBe(404);
-  });
 
-  it('rejects a domain that is not allow-listed', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ allowed_origins: ['other-domain.com'] }));
-    const response = await GET(request('widget-1', 'https://example.com'));
-    expect(response.status).toBe(403);
-  });
-
-  it('never returns anything for an empty allow-list — never "allow all" by default', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ allowed_origins: [] }));
-    const response = await GET(request('widget-1', 'https://example.com'));
-    expect(response.status).toBe(403);
-  });
-
-  it('returns only the safe display fields for an allowed origin, never internal ids', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config());
-    const response = await GET(request('widget-1', 'https://example.com'));
+    const response = await GET(request(WIDGET_ID));
 
     expect(response.status).toBe(200);
+    const data = await response.json();
+    expect(data).toEqual({ enabled: false });
+  });
+
+  it('passes the request origin through to the config lookup so the RPC can enforce the allow-list itself', async () => {
+    fetchWidgetPublicConfig.mockResolvedValue(null);
+
+    await GET(request(WIDGET_ID, 'https://not-allowed.example'));
+
+    expect(fetchWidgetPublicConfig).toHaveBeenCalledWith(WIDGET_ID, 'https://not-allowed.example');
+  });
+
+  it('returns the safe display fields for a real, active, enabled, allow-listed widget', async () => {
+    fetchWidgetPublicConfig.mockResolvedValue(config());
+
+    const response = await GET(request(WIDGET_ID, 'https://example.com'));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
     const data = await response.json();
     expect(data).toEqual({
       enabled: true,
@@ -77,17 +79,23 @@ describe('GET /api/public-widget/config', () => {
       position: 'bottom-right',
       humanHandoffEnabled: true,
       defaultLanguage: 'en',
-      supportedLanguages: ['en', 'me']
+      supportedLanguages: ['en']
     });
-    expect(data.public_widget_id).toBeUndefined();
-    expect(data.business_id).toBeUndefined();
   });
 
-  it('reports enabled:false when the widget is disabled, still without leaking anything else', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ widget_enabled: false }));
-    const response = await GET(request('widget-1', 'https://example.com'));
+  it('never includes business_id, owner_id, allowed_origins, or handoff_email in the response', async () => {
+    fetchWidgetPublicConfig.mockResolvedValue(config());
 
+    const response = await GET(request(WIDGET_ID, 'https://example.com'));
     const data = await response.json();
-    expect(data.enabled).toBe(false);
+
+    expect(data).not.toHaveProperty('businessId');
+    expect(data).not.toHaveProperty('business_id');
+    expect(data).not.toHaveProperty('ownerId');
+    expect(data).not.toHaveProperty('owner_id');
+    expect(data).not.toHaveProperty('allowedOrigins');
+    expect(data).not.toHaveProperty('allowed_origins');
+    expect(data).not.toHaveProperty('handoffEmail');
+    expect(data).not.toHaveProperty('handoff_email');
   });
 });

@@ -1,38 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WidgetPublicConfigRow } from '@/lib/supabase/database.types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { SessionResult } from '@/lib/public-widget/runtime';
 import { POST } from './route';
 
-const fetchWidgetPublicConfig = vi.fn<(id: string) => Promise<WidgetPublicConfigRow | null>>();
+const startOrContinueSession = vi.fn<(params: unknown) => Promise<SessionResult>>();
+const checkRateLimit = vi.fn<(key: string, limit: number, windowMs: number) => boolean>();
 
-vi.mock('@/lib/public-widget/config', () => ({
-  fetchWidgetPublicConfig: (id: string) => fetchWidgetPublicConfig(id)
+vi.mock('@/lib/public-widget/runtime', () => ({
+  startOrContinueSession: (params: unknown) => startOrContinueSession(params)
 }));
 
-vi.mock('@/lib/public-widget/env', () => ({
-  getChatRuntimeOrigin: () => 'https://chatbotdemo.example',
-  isChatRuntimeConfigured: () => true,
-  CHAT_RUNTIME_MISSING_MESSAGE:
-    "The chat assistant isn't available right now. Please try again shortly."
-}));
-
-function config(overrides: Partial<WidgetPublicConfigRow> = {}): WidgetPublicConfigRow {
+vi.mock('@/lib/public-widget/rate-limit', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/public-widget/rate-limit')>(
+    '@/lib/public-widget/rate-limit'
+  );
   return {
-    public_widget_id: 'widget-1',
-    business_active: true,
-    supported_languages: ['en'],
-    default_language: 'en',
-    title: 'Adria Assistant',
-    welcome_message_en: 'Hi!',
-    welcome_message_me: null,
-    welcome_message_ru: null,
-    primary_color: '#1677ff',
-    position: 'bottom-right',
-    widget_enabled: true,
-    human_handoff_enabled: true,
-    allowed_origins: ['example.com'],
-    ...overrides
+    ...actual,
+    checkRateLimit: (...args: Parameters<typeof actual.checkRateLimit>) => checkRateLimit(...args)
   };
-}
+});
 
 function request(body: unknown, origin: string | null = 'https://example.com'): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -50,99 +35,102 @@ const validBody = {
 };
 
 beforeEach(() => {
-  fetchWidgetPublicConfig.mockReset();
-  vi.stubGlobal('fetch', vi.fn());
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
+  startOrContinueSession.mockReset();
+  checkRateLimit.mockReset().mockReturnValue(true);
 });
 
 describe('POST /api/public-widget/session', () => {
-  it('rejects a malformed body before ever looking up the widget — no auth/session required either way', async () => {
+  it('rejects a malformed body before ever calling the runtime — no auth/session required either way', async () => {
     const response = await POST(request({ nope: true }));
     expect(response.status).toBe(400);
-    expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
+    expect(startOrContinueSession).not.toHaveBeenCalled();
+  });
+
+  it('rejects a body over the raw size limit before ever parsing it', async () => {
+    const response = await POST(request({ ...validBody, visitorId: 'x'.repeat(20_000) }));
+    expect(response.status).toBe(400);
+    expect(startOrContinueSession).not.toHaveBeenCalled();
+  });
+
+  it('returns 429 and never calls the runtime once the rate limit is hit', async () => {
+    checkRateLimit.mockReturnValue(false);
+
+    const response = await POST(request(validBody));
+
+    expect(response.status).toBe(429);
+    expect(startOrContinueSession).not.toHaveBeenCalled();
   });
 
   it('returns a generic 404 for a widget id that does not exist — the "cross-business" case for a public endpoint', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(null);
+    startOrContinueSession.mockResolvedValue({ status: 'unknown' });
 
     const response = await POST(request(validBody));
 
     expect(response.status).toBe(404);
     const data = await response.json();
     expect(data.error).toBe('Widget not found.');
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
   it('rejects a request from a domain that is not on the allow-list', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ allowed_origins: ['other-domain.com'] }));
+    startOrContinueSession.mockResolvedValue({ status: 'origin_denied' });
 
     const response = await POST(request(validBody, 'https://example.com'));
 
     expect(response.status).toBe(403);
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it('rejects every domain when the widget has no allowed origins configured yet — never "allow all" by default', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ allowed_origins: [] }));
-
-    const response = await POST(request(validBody, 'https://example.com'));
-
-    expect(response.status).toBe(403);
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
-  });
-
-  it('reports the widget as disabled without ever reaching the upstream runtime', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ widget_enabled: false }));
+  it('reports the widget as disabled', async () => {
+    startOrContinueSession.mockResolvedValue({ status: 'disabled' });
 
     const response = await POST(request(validBody));
 
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data).toEqual({ enabled: false });
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it('reports disabled when the business itself is inactive, even if the widget row says enabled', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(
-      config({ business_active: false, widget_enabled: true })
-    );
+  it('returns a friendly 503 when the runtime is unavailable (e.g. service-role key not configured)', async () => {
+    startOrContinueSession.mockResolvedValue({ status: 'unavailable' });
 
-    const response = await POST(request(validBody));
+    const response = await POST(request(validBody, 'https://example.com'));
 
-    const data = await response.json();
-    expect(data).toEqual({ enabled: false });
+    expect(response.status).toBe(503);
   });
 
-  it('proxies to the real chat runtime and relays its response for an allowed, enabled widget', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config());
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ enabled: true, conversationId: 'conv-1', messages: [] }), {
-        status: 200
-      })
-    );
+  it('returns the conversation id and messages for an allowed, enabled widget', async () => {
+    startOrContinueSession.mockResolvedValue({
+      status: 'ok',
+      conversationId: 'conv-1',
+      messages: [{ role: 'assistant', text: 'Hi!' }]
+    });
 
     const response = await POST(request(validBody, 'https://example.com'));
 
     expect(response.status).toBe(200);
     expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://example.com');
     const data = await response.json();
-    expect(data.conversationId).toBe('conv-1');
-
-    expect(fetch).toHaveBeenCalledWith(
-      'https://chatbotdemo.example/api/widget/session',
-      expect.objectContaining({ method: 'POST' })
-    );
+    expect(data).toEqual({
+      enabled: true,
+      conversationId: 'conv-1',
+      messages: [{ role: 'assistant', text: 'Hi!' }]
+    });
   });
 
-  it('returns a friendly 502 instead of crashing when the upstream runtime is unreachable', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config());
-    vi.mocked(fetch).mockRejectedValue(new Error('network down'));
+  it('never sends a business id to the runtime — only publicWidgetId, visitorId, language, conversationId, and origin', async () => {
+    startOrContinueSession.mockResolvedValue({
+      status: 'ok',
+      conversationId: 'conv-1',
+      messages: []
+    });
 
-    const response = await POST(request(validBody, 'https://example.com'));
+    await POST(request(validBody, 'https://example.com'));
 
-    expect(response.status).toBe(502);
+    expect(startOrContinueSession).toHaveBeenCalledWith({
+      publicWidgetId: validBody.publicWidgetId,
+      visitorId: validBody.visitorId,
+      language: undefined,
+      conversationId: undefined,
+      originHeader: 'https://example.com'
+    });
   });
 });

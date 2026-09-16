@@ -1,38 +1,23 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { WidgetPublicConfigRow } from '@/lib/supabase/database.types';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { MessageResult } from '@/lib/public-widget/runtime';
 import { POST } from './route';
 
-const fetchWidgetPublicConfig = vi.fn<(id: string) => Promise<WidgetPublicConfigRow | null>>();
+const postMessage = vi.fn<(params: unknown) => Promise<MessageResult>>();
+const checkRateLimit = vi.fn<(key: string, limit: number, windowMs: number) => boolean>();
 
-vi.mock('@/lib/public-widget/config', () => ({
-  fetchWidgetPublicConfig: (id: string) => fetchWidgetPublicConfig(id)
+vi.mock('@/lib/public-widget/runtime', () => ({
+  postMessage: (params: unknown) => postMessage(params)
 }));
 
-vi.mock('@/lib/public-widget/env', () => ({
-  getChatRuntimeOrigin: () => 'https://chatbotdemo.example',
-  isChatRuntimeConfigured: () => true,
-  CHAT_RUNTIME_MISSING_MESSAGE:
-    "The chat assistant isn't available right now. Please try again shortly."
-}));
-
-function config(overrides: Partial<WidgetPublicConfigRow> = {}): WidgetPublicConfigRow {
+vi.mock('@/lib/public-widget/rate-limit', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/public-widget/rate-limit')>(
+    '@/lib/public-widget/rate-limit'
+  );
   return {
-    public_widget_id: 'widget-1',
-    business_active: true,
-    supported_languages: ['en'],
-    default_language: 'en',
-    title: 'Adria Assistant',
-    welcome_message_en: 'Hi!',
-    welcome_message_me: null,
-    welcome_message_ru: null,
-    primary_color: '#1677ff',
-    position: 'bottom-right',
-    widget_enabled: true,
-    human_handoff_enabled: true,
-    allowed_origins: ['example.com'],
-    ...overrides
+    ...actual,
+    checkRateLimit: (...args: Parameters<typeof actual.checkRateLimit>) => checkRateLimit(...args)
   };
-}
+});
 
 function request(body: unknown, origin: string | null = 'https://example.com'): Request {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -52,64 +37,86 @@ const validBody = {
 };
 
 beforeEach(() => {
-  fetchWidgetPublicConfig.mockReset();
-  vi.stubGlobal('fetch', vi.fn());
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
+  postMessage.mockReset();
+  checkRateLimit.mockReset().mockReturnValue(true);
 });
 
 describe('POST /api/public-widget/message', () => {
   it('returns a generic 404 for an unknown widget id', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(null);
+    postMessage.mockResolvedValue({ status: 'unknown' });
 
     const response = await POST(request(validBody));
 
     expect(response.status).toBe(404);
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it('rejects a disallowed domain without ever reaching the upstream runtime', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ allowed_origins: ['other-domain.com'] }));
+  it('returns a generic 404 when the conversation id does not belong to the resolved business', async () => {
+    postMessage.mockResolvedValue({ status: 'conversation_not_found' });
+
+    const response = await POST(request(validBody));
+
+    expect(response.status).toBe(404);
+    const data = await response.json();
+    expect(data.error).toBe('Conversation not found.');
+  });
+
+  it('rejects a disallowed domain without ever calling the runtime', async () => {
+    postMessage.mockResolvedValue({ status: 'origin_denied' });
 
     const response = await POST(request(validBody, 'https://example.com'));
 
     expect(response.status).toBe(403);
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it('reports disabled without reaching the upstream runtime', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config({ widget_enabled: false }));
+  it('reports disabled', async () => {
+    postMessage.mockResolvedValue({ status: 'disabled' });
 
     const response = await POST(request(validBody));
 
     const data = await response.json();
     expect(data).toEqual({ enabled: false });
-    expect(vi.mocked(fetch)).not.toHaveBeenCalled();
   });
 
-  it('proxies an allowed, enabled request to the real chat runtime', async () => {
-    fetchWidgetPublicConfig.mockResolvedValue(config());
-    vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ messages: [{ role: 'assistant', text: 'Hi!' }] }), {
-        status: 200
-      })
-    );
+  it('returns 429 and never calls the runtime once the rate limit is hit', async () => {
+    checkRateLimit.mockReturnValue(false);
+
+    const response = await POST(request(validBody));
+
+    expect(response.status).toBe(429);
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('returns the assistant reply for an allowed, enabled request', async () => {
+    postMessage.mockResolvedValue({
+      status: 'ok',
+      messages: [{ role: 'assistant', text: 'Hi!' }]
+    });
 
     const response = await POST(request(validBody, 'https://example.com'));
 
     expect(response.status).toBe(200);
-    expect(fetch).toHaveBeenCalledWith(
-      'https://chatbotdemo.example/api/widget/message',
-      expect.objectContaining({ method: 'POST' })
-    );
+    const data = await response.json();
+    expect(data).toEqual({ messages: [{ role: 'assistant', text: 'Hi!' }] });
   });
 
-  it('rejects a message over the length limit before ever looking up the widget', async () => {
+  it('rejects a message over the length limit before ever calling the runtime', async () => {
     const response = await POST(request({ ...validBody, message: 'a'.repeat(2001) }));
 
     expect(response.status).toBe(400);
-    expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
+    expect(postMessage).not.toHaveBeenCalled();
+  });
+
+  it('never sends a business id to the runtime — only the widget-resolved fields', async () => {
+    postMessage.mockResolvedValue({ status: 'ok', messages: [] });
+
+    await POST(request(validBody, 'https://example.com'));
+
+    expect(postMessage).toHaveBeenCalledWith({
+      publicWidgetId: validBody.publicWidgetId,
+      visitorId: validBody.visitorId,
+      conversationId: validBody.conversationId,
+      message: validBody.message,
+      originHeader: 'https://example.com'
+    });
   });
 });

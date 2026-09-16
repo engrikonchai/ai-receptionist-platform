@@ -23,7 +23,7 @@ export const GENERIC_LOAD_ERROR = 'We could not load your widget settings. Pleas
 export type WidgetSettings = {
   /** businesses.public_widget_id — the only id the public widget/embed ever sends. Read-only here. */
   publicWidgetId: string;
-  /** widget_settings.mock_ai_enabled — whether the widget responds to visitors at all. */
+  /** widget_settings.widget_enabled — whether the widget responds to visitors at all. Separate from ChatbotDemo's own unrelated mock_ai_enabled toggle. */
   enabled: boolean;
   /** widget_settings.title */
   assistantName: string;

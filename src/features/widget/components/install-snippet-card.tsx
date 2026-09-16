@@ -11,10 +11,12 @@ const COPY_RESET_DELAY_MS = 2000;
  * Builds the exact `<script>` tag an owner pastes onto their own site.
  * `siteOrigin` is this platform's own canonical origin (see
  * src/lib/site-url.ts) — the loader script it points at
- * (`/widget-loader.js`, a public static file, see public/widget-loader.js)
- * mounts the real widget shell at `/widget/[publicWidgetId]`, which
- * talks to the real widget runtime through
- * src/app/api/public-widget/* — never a fake/example URL.
+ * (`/widget-loader.js`, a public static file, see
+ * public/widget-loader.js) renders the whole chat UI itself, inside a
+ * Shadow DOM host it injects directly into the third-party page (no
+ * separate widget page/route to load), and talks only to the real
+ * widget runtime through this platform's own src/app/api/public-widget/*
+ * endpoints — never a fake/example URL.
  */
 export function buildInstallSnippet(siteOrigin: string, publicWidgetId: string): string {
   return `<script src="${siteOrigin}/widget-loader.js" data-widget-id="${publicWidgetId}" async></script>`;

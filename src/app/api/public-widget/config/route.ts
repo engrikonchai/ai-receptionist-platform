@@ -1,45 +1,42 @@
 import { fetchWidgetPublicConfig } from '@/lib/public-widget/config';
-import { corsHeadersFor, isOriginAllowed } from '@/lib/public-widget/origin';
-import { handlePreflight, publicWidgetJson } from '@/lib/public-widget/proxy';
+import { handlePreflight, publicWidgetJson } from '@/lib/public-widget/http';
+import { corsHeadersFor } from '@/lib/public-widget/origin';
 
 /**
  * Public, unauthenticated, read-only endpoint — the cosmetic/display
  * config (enabled state, assistant name, colour, launcher position, and
- * whether human hand-off is offered) the embeddable widget shell
- * (src/app/widget/[publicWidgetId]) needs before a visitor ever opens
- * the chat and a real session gets created. Same origin allow-list
- * enforcement as the session/message proxies — see
- * src/lib/public-widget/proxy.ts's doc comment — but this one never
- * forwards anything to the upstream chat runtime; it only ever reads
- * `public.widget_public_config` via the anon key.
+ * whether human hand-off is offered) the embeddable widget loader
+ * (public/widget-loader.js) needs before a visitor ever opens the chat.
+ * Backed entirely by `public.resolve_widget_config` (a SECURITY DEFINER
+ * function, not an anon-granted table/view — see
+ * supabase/migrations/20260916120000_widget_allowed_origins.sql), read
+ * through the anon key.
+ *
+ * An unknown widget id, a disabled widget or business, and a request
+ * from a non-allow-listed origin all produce the exact same
+ * `{ enabled: false }` response — by design, so this endpoint gives a
+ * prober no signal about which of those three is true, and can never be
+ * used to enumerate other businesses' widget configuration.
  */
 export async function GET(request: Request) {
   const url = new URL(request.url);
   const publicWidgetId = url.searchParams.get('widgetId');
-  if (!publicWidgetId) {
-    return publicWidgetJson(400, { error: 'Missing widgetId.' });
-  }
-
   const originHeader = request.headers.get('origin');
-  const config = await fetchWidgetPublicConfig(publicWidgetId);
-  if (!config) {
-    return publicWidgetJson(404, { error: 'Widget not found.' });
-  }
-
   const headers = originHeader ? corsHeadersFor(originHeader) : undefined;
 
-  if (!isOriginAllowed(originHeader, config.allowed_origins)) {
-    return publicWidgetJson(
-      403,
-      { error: 'This widget is not enabled for this website.' },
-      headers
-    );
+  if (!publicWidgetId) {
+    return publicWidgetJson(400, { error: 'Missing widgetId.' }, headers);
+  }
+
+  const config = await fetchWidgetPublicConfig(publicWidgetId, originHeader);
+  if (!config) {
+    return publicWidgetJson(200, { enabled: false }, headers);
   }
 
   return publicWidgetJson(
     200,
     {
-      enabled: config.business_active && config.widget_enabled,
+      enabled: true,
       title: config.title,
       primaryColor: config.primary_color,
       position: config.position,

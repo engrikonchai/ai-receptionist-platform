@@ -111,20 +111,26 @@ describe('widgetSettingsSchema — allowed origins', () => {
     expect(result.success).toBe(true);
   });
 
-  it('accepts a bare domain', () => {
+  it('accepts a bare domain and normalizes it to a full https:// origin', () => {
     const result = widgetSettingsSchema('en').safeParse({
       ...baseValues,
       allowedOrigins: ['www.example.com']
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.allowedOrigins).toEqual(['https://www.example.com']);
+    }
   });
 
-  it('rejects an entry that includes a scheme', () => {
+  it('accepts an entry that already includes a scheme and keeps it', () => {
     const result = widgetSettingsSchema('en').safeParse({
       ...baseValues,
       allowedOrigins: ['https://example.com']
     });
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.allowedOrigins).toEqual(['https://example.com']);
+    }
   });
 
   it('rejects an obviously invalid domain', () => {
@@ -135,11 +141,37 @@ describe('widgetSettingsSchema — allowed origins', () => {
     expect(result.success).toBe(false);
   });
 
-  it('accepts localhost with a port, for local testing', () => {
+  it('rejects an entry with a path, query, or credentials', () => {
+    expect(
+      widgetSettingsSchema('en').safeParse({
+        ...baseValues,
+        allowedOrigins: ['example.com/some/path']
+      }).success
+    ).toBe(false);
+    expect(
+      widgetSettingsSchema('en').safeParse({
+        ...baseValues,
+        allowedOrigins: ['https://user:pass@example.com']
+      }).success
+    ).toBe(false);
+  });
+
+  it('rejects a wildcard entry', () => {
+    const result = widgetSettingsSchema('en').safeParse({
+      ...baseValues,
+      allowedOrigins: ['*.example.com']
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it('accepts localhost with a port, for local testing, and normalizes it', () => {
     const result = widgetSettingsSchema('en').safeParse({
       ...baseValues,
       allowedOrigins: ['localhost:3000']
     });
     expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.allowedOrigins).toEqual(['https://localhost:3000']);
+    }
   });
 });

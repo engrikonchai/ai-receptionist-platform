@@ -11,7 +11,8 @@
  * (supabase/migrations/20260915000100_platform_onboarding.sql),
  * `messages.sender_type` / `messages.client_message_id`
  * (supabase/migrations/20260915170200_inbox_human_replies.sql), and
- * `widget_settings.allowed_origins` plus the `widget_public_config` view
+ * `widget_settings.widget_enabled` / `widget_settings.allowed_origins`
+ * plus the `resolve_widget_config` function
  * (supabase/migrations/20260916120000_widget_allowed_origins.sql) — see
  * each file's header for why it's safe. None of these have been applied
  * yet.
@@ -152,32 +153,35 @@ export interface WidgetSettingsRow {
   primary_color: string;
   position: WidgetPosition;
   mock_ai_enabled: boolean;
+  /** Dedicated on/off toggle for the public embeddable widget, independent of `mock_ai_enabled` (ChatbotDemo's own, unrelated demo toggle). See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
+  widget_enabled: boolean;
   human_handoff_enabled: boolean;
-  /** Website origins (scheme + host) allowed to embed this widget. Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
+  /** Normalized "scheme://hostname[:port]" origins allowed to embed this widget (see src/lib/public-widget/origin.ts). Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
   allowed_origins: string[];
   created_at: string;
   updated_at: string;
 }
 
 /**
- * The public-safe subset of businesses + widget_settings exposed by the
- * `public.widget_public_config` view (same migration as above, not
- * applied yet) — the only thing the public widget/chat proxy
- * (src/app/api/public-widget/*) reads with the anon key. Never includes
- * business_id, owner_id, handoff_email, or anything else private.
+ * The row shape returned by `public.resolve_widget_config(p_widget_id,
+ * p_origin)` (same migration as above, not applied yet) — the only
+ * thing the public widget config endpoint (src/app/api/public-widget/config)
+ * reads, via the anon key. The function itself already enforces "widget
+ * exists, business active, widget enabled, origin allow-listed" in its
+ * WHERE clause, so a returned row always means "show the widget"; zero
+ * rows always means "don't" (unknown id, disabled, inactive, or
+ * disallowed origin are all indistinguishable from the caller's side,
+ * by design). Never includes business_id, owner_id, allowed_origins, or
+ * handoff_email.
  */
-export interface WidgetPublicConfigRow {
-  public_widget_id: string;
-  business_active: boolean;
-  supported_languages: string[];
-  default_language: string;
+export interface WidgetPublicConfigRpcResult {
   title: string;
   welcome_message_en: string | null;
   welcome_message_me: string | null;
   welcome_message_ru: string | null;
   primary_color: string;
   position: WidgetPosition;
-  widget_enabled: boolean;
   human_handoff_enabled: boolean;
-  allowed_origins: string[];
+  default_language: string;
+  supported_languages: string[];
 }

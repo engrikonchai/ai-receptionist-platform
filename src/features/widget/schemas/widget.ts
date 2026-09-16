@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { normalizeOrigin } from '@/lib/public-widget/origin';
 import { isWidgetLanguage, type WidgetLanguage } from '../utils/language';
 
 export const WIDGET_NAME_MAX_LENGTH = 100;
@@ -13,28 +14,31 @@ export const WIDGET_POSITION_VALUES = ['bottom-right', 'bottom-left'] as const;
 export type WidgetPositionValue = (typeof WIDGET_POSITION_VALUES)[number];
 
 /**
- * A bare origin's host — no scheme, no path, no trailing slash — e.g.
- * `example.com`, `www.example.com`, or `localhost:3000` for local
- * testing. Kept intentionally simple (this is an allow-list an owner
- * fills in by hand, not a general-purpose URL parser); the server is
- * still the one that ultimately compares this against a request's real
- * Origin header, never trusting this format alone as a security
- * boundary.
+ * An owner types a bare domain (e.g. "example.com") or a full origin
+ * (e.g. "https://example.com") — `normalizeOrigin()` (shared with the
+ * request-time allow-list check in src/lib/public-widget/origin.ts)
+ * accepts either, defaults a missing scheme to https://, and stores the
+ * canonical "scheme://hostname[:port]" form. This is what
+ * `resolve_widget_config`'s exact-string match compares a request's own
+ * normalized `Origin` header against, so the stored format must match
+ * byte-for-byte — normalizing once, here, on save, keeps that true
+ * without the owner ever having to type a scheme themselves.
  */
-const ORIGIN_HOST_PATTERN =
-  /^(localhost(:\d{1,5})?|(\d{1,3}\.){3}\d{1,3}(:\d{1,5})?|(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}(:\d{1,5})?)$/i;
-
 const originHostSchema = z
   .string()
   .trim()
-  .toLowerCase()
   .min(1, 'Enter a domain.')
   .max(253, 'Keep it under 253 characters.')
-  .refine((value) => !value.includes('://'), {
-    message: 'Enter just the domain, without https:// (e.g. example.com).'
-  })
-  .refine((value) => ORIGIN_HOST_PATTERN.test(value), {
-    message: 'Enter a valid domain (e.g. example.com or www.example.com).'
+  .transform((value, ctx) => {
+    const normalized = normalizeOrigin(value);
+    if (!normalized) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Enter a valid domain (e.g. example.com or https://example.com).'
+      });
+      return z.NEVER;
+    }
+    return normalized;
   });
 
 const welcomeMessageField = z
