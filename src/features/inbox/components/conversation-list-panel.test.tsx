@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ConversationListItem } from '../api/types';
@@ -12,10 +12,7 @@ vi.mock('../api/queries', () => ({
   conversationsOptions: (businessId: string) => ({
     queryKey: ['inbox', businessId, 'conversations'],
     queryFn: fetchItems
-  }),
-  inboxKeys: {
-    conversations: (businessId: string) => ['inbox', businessId, 'conversations']
-  }
+  })
 }));
 
 const REPORTED_BUSINESS_ID = 'c35003d0-6956-47d2-9f9b-1fc1dc10090b';
@@ -40,14 +37,11 @@ function conversation(
   };
 }
 
-function renderPanel(serverConversationCount: number | null = null) {
+function renderPanel() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <ConversationListPanel
-        businessId={REPORTED_BUSINESS_ID}
-        serverConversationCount={serverConversationCount}
-      />
+      <ConversationListPanel businessId={REPORTED_BUSINESS_ID} />
     </QueryClientProvider>
   );
 }
@@ -55,10 +49,9 @@ function renderPanel(serverConversationCount: number | null = null) {
 beforeEach(() => {
   fetchItems.mockReset();
   // useInboxStore is a module-level singleton (see utils/store.ts) — a
-  // stale status/channel filter left over from a previous test (or, in
-  // production, a previous interaction earlier in the same browser
-  // session) would otherwise make "all 5 render" fail for a reason
-  // unrelated to what's under test here.
+  // stale status/channel filter left over from a previous test would
+  // otherwise make "all 5 render" fail for a reason unrelated to what's
+  // under test here.
   useInboxStore.setState({
     selectedConversationId: null,
     searchQuery: '',
@@ -70,7 +63,7 @@ beforeEach(() => {
   });
 });
 
-describe('ConversationListPanel — regression for the production 5-to-0 investigation', () => {
+describe('ConversationListPanel', () => {
   it('renders all 5 conversations under the default "All" status filter with no channel filters and no search', async () => {
     const conversations = Array.from({ length: 5 }, (_, i) =>
       conversation({ id: `conv-${i + 1}` })
@@ -92,25 +85,10 @@ describe('ConversationListPanel — regression for the production 5-to-0 investi
     expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true');
   });
 
-  it('shows the temporary diagnostic panel, with matching server/client/filtered counts, only when the list is genuinely empty', async () => {
+  it('shows the empty state when there are no conversations', async () => {
     fetchItems.mockResolvedValue([]);
-    renderPanel(0);
+    renderPanel();
 
     await waitFor(() => expect(screen.getByText('No conversations yet')).toBeInTheDocument());
-    expect(screen.getByText('Temporary diagnostics')).toBeInTheDocument();
-    expect(screen.getByText(REPORTED_BUSINESS_ID)).toBeInTheDocument();
-    const diagnostics = screen.getByText('Temporary diagnostics').closest('div') as HTMLElement;
-    // Server count, client count, filtered count should all read 0 here
-    // — a real "no conversations at all" case, not the bug under
-    // investigation (where server/client would disagree).
-    expect(within(diagnostics).getAllByText('0')).toHaveLength(3);
-  });
-
-  it('does not show the diagnostic panel once conversations are present', async () => {
-    fetchItems.mockResolvedValue([conversation({ id: 'conv-1' })]);
-    renderPanel(1);
-
-    await waitFor(() => expect(screen.getAllByRole('listitem')).toHaveLength(1));
-    expect(screen.queryByText('Temporary diagnostics')).not.toBeInTheDocument();
   });
 });

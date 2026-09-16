@@ -8,10 +8,14 @@
  *
  * The exceptions are this repo's own additive migrations:
  * `profiles.onboarding_completed` / `onboarding_completed_at`
- * (supabase/migrations/20260915000100_platform_onboarding.sql), and
+ * (supabase/migrations/20260915000100_platform_onboarding.sql),
  * `messages.sender_type` / `messages.client_message_id`
- * (supabase/migrations/20260915170200_inbox_human_replies.sql) — see
- * each file's header for why it's safe. Neither has been applied yet.
+ * (supabase/migrations/20260915170200_inbox_human_replies.sql), and
+ * `widget_settings.widget_enabled` / `widget_settings.allowed_origins`
+ * plus the `resolve_widget_config` function
+ * (supabase/migrations/20260916120000_widget_allowed_origins.sql) — see
+ * each file's header for why it's safe. None of these have been applied
+ * yet.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -149,7 +153,35 @@ export interface WidgetSettingsRow {
   primary_color: string;
   position: WidgetPosition;
   mock_ai_enabled: boolean;
+  /** Dedicated on/off toggle for the public embeddable widget, independent of `mock_ai_enabled` (ChatbotDemo's own, unrelated demo toggle). See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
+  widget_enabled: boolean;
   human_handoff_enabled: boolean;
+  /** Normalized "scheme://hostname[:port]" origins allowed to embed this widget (see src/lib/public-widget/origin.ts). Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
+  allowed_origins: string[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The row shape returned by `public.resolve_widget_config(p_widget_id,
+ * p_origin)` (same migration as above, not applied yet) — the only
+ * thing the public widget config endpoint (src/app/api/public-widget/config)
+ * reads, via the anon key. The function itself already enforces "widget
+ * exists, business active, widget enabled, origin allow-listed" in its
+ * WHERE clause, so a returned row always means "show the widget"; zero
+ * rows always means "don't" (unknown id, disabled, inactive, or
+ * disallowed origin are all indistinguishable from the caller's side,
+ * by design). Never includes business_id, owner_id, allowed_origins, or
+ * handoff_email.
+ */
+export interface WidgetPublicConfigRpcResult {
+  title: string;
+  welcome_message_en: string | null;
+  welcome_message_me: string | null;
+  welcome_message_ru: string | null;
+  primary_color: string;
+  position: WidgetPosition;
+  human_handoff_enabled: boolean;
+  default_language: string;
+  supported_languages: string[];
 }
