@@ -30,6 +30,24 @@ const CONVERSATION_LIST_LIMIT = 50;
 const MESSAGE_PREVIEW_SAMPLE_LIMIT = 500;
 const MESSAGE_PREVIEW_MAX_LENGTH = 140;
 
+/**
+ * Temporary, safe diagnostics for the "Inbox shows 0 conversations"
+ * investigation — logs only the resolved business id, the table
+ * queried, the row count, and the Postgres error code/message (never
+ * row contents, tokens, cookies, or any other secret). Goes to
+ * `console.error` so it's captured by Vercel's request logs. Remove
+ * once the production cause is confirmed and resolved.
+ */
+function logInboxQueryDiagnostic(info: {
+  businessId: string;
+  table: string;
+  rowCount: number | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}) {
+  console.error('[inbox:diagnostic]', JSON.stringify(info));
+}
+
 function truncatePreview(text: string): string {
   const trimmed = text.trim();
   return trimmed.length > MESSAGE_PREVIEW_MAX_LENGTH
@@ -73,6 +91,14 @@ export async function fetchConversations(businessId: string): Promise<Conversati
     .order('updated_at', { ascending: false })
     .limit(CONVERSATION_LIST_LIMIT);
 
+  logInboxQueryDiagnostic({
+    businessId: verifiedId,
+    table: 'conversations',
+    rowCount: conversations?.length ?? null,
+    errorCode: error?.code,
+    errorMessage: error?.message
+  });
+
   if (error) throw new Error('We could not load conversations. Please try again.');
 
   const rows = (conversations ?? []) as ConversationRow[];
@@ -105,12 +131,41 @@ export async function fetchConversations(businessId: string): Promise<Conversati
       .order('created_at', { ascending: false })
   ]);
 
-  if (messagesError || leadsError || handoffsError) {
-    throw new Error('We could not load conversations. Please try again.');
-  }
+  logInboxQueryDiagnostic({
+    businessId: verifiedId,
+    table: 'messages',
+    rowCount: recentMessages?.length ?? null,
+    errorCode: messagesError?.code,
+    errorMessage: messagesError?.message
+  });
+  logInboxQueryDiagnostic({
+    businessId: verifiedId,
+    table: 'leads',
+    rowCount: leads?.length ?? null,
+    errorCode: leadsError?.code,
+    errorMessage: leadsError?.message
+  });
+  logInboxQueryDiagnostic({
+    businessId: verifiedId,
+    table: 'handoffs',
+    rowCount: handoffs?.length ?? null,
+    errorCode: handoffsError?.code,
+    errorMessage: handoffsError?.message
+  });
+
+  // Each enrichment source (message previews, leads, handoffs) is
+  // independent and best-effort — a failure in any one of them (e.g. a
+  // table whose RLS policy hasn't been applied yet) must never discard
+  // the `rows` this function already successfully fetched above. Before
+  // this change, any single enrichment error threw and the caller lost
+  // every conversation the primary query had already found — the
+  // conversations were fetched correctly but never reached the UI.
+  const messageRows = messagesError ? [] : ((recentMessages ?? []) as MessagePreviewRow[]);
+  const leadRows = leadsError ? [] : ((leads ?? []) as LeadPreviewRow[]);
+  const handoffRows = handoffsError ? [] : ((handoffs ?? []) as HandoffPreviewRow[]);
 
   const latestMessageByConversation = new Map<string, { content: string; created_at: string }>();
-  for (const message of (recentMessages ?? []) as MessagePreviewRow[]) {
+  for (const message of messageRows) {
     if (!latestMessageByConversation.has(message.conversation_id)) {
       latestMessageByConversation.set(message.conversation_id, {
         content: message.content,
@@ -120,14 +175,14 @@ export async function fetchConversations(businessId: string): Promise<Conversati
   }
 
   const leadByConversation = new Map<string, { name: string; contact: string }>();
-  for (const lead of (leads ?? []) as LeadPreviewRow[]) {
+  for (const lead of leadRows) {
     if (lead.conversation_id && !leadByConversation.has(lead.conversation_id)) {
       leadByConversation.set(lead.conversation_id, { name: lead.name, contact: lead.contact });
     }
   }
 
   const handoffStatusByConversation = new Map<string, HandoffRow['status']>();
-  for (const handoff of (handoffs ?? []) as HandoffPreviewRow[]) {
+  for (const handoff of handoffRows) {
     if (handoff.conversation_id && !handoffStatusByConversation.has(handoff.conversation_id)) {
       handoffStatusByConversation.set(handoff.conversation_id, handoff.status);
     }
