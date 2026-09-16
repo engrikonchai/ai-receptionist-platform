@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
+import { clearActiveBusinessCookie } from '@/lib/active-business-cookie';
+import { getQueryClient } from '@/lib/query-client';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { AuthShell } from './auth-shell';
 
@@ -22,6 +24,14 @@ export function AccountRecovery({ email }: { email?: string }) {
     setIsSigningOut(true);
     const supabase = createSupabaseBrowserClient();
     await supabase?.auth.signOut();
+
+    // Same reasoning as OwnerMenu's sign-out: this browser tab's
+    // QueryClient and the active-business cookie are both long-lived and
+    // must never carry this account's state into whichever account
+    // signs in next in this same tab.
+    getQueryClient().clear();
+    clearActiveBusinessCookie();
+
     router.push('/login');
     router.refresh();
   }

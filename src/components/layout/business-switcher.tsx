@@ -12,15 +12,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
+import { setActiveBusinessCookie } from '@/lib/active-business-cookie';
 import type { BusinessRow } from '@/lib/supabase/database.types';
-
-const ACTIVE_BUSINESS_COOKIE = 'active_business_id';
-
-function setActiveBusinessCookie(businessId: string) {
-  if (typeof window === 'undefined') return;
-  const secure = window.location.protocol === 'https:' ? 'Secure;' : '';
-  document.cookie = `${ACTIVE_BUSINESS_COOKIE}=${businessId}; path=/; max-age=31536000; SameSite=Lax; ${secure}`;
-}
 
 export function BusinessSwitcher({
   businesses,

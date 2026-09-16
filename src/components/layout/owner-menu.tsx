@@ -13,6 +13,8 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar';
+import { clearActiveBusinessCookie } from '@/lib/active-business-cookie';
+import { getQueryClient } from '@/lib/query-client';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import type { ProfileRow } from '@/lib/supabase/database.types';
 
@@ -26,6 +28,19 @@ export function OwnerMenu({ email, profile }: { email: string; profile: ProfileR
     setIsSigningOut(true);
     const supabase = createSupabaseBrowserClient();
     await supabase?.auth.signOut();
+
+    // This browser tab's QueryClient is a long-lived singleton (see
+    // getQueryClient()) that would otherwise outlive this sign-out —
+    // without clearing it, every business- and user-scoped query this
+    // owner ever loaded (Inbox conversations, Knowledge items, ...)
+    // stays cached in memory and could be served to whichever account
+    // signs in next in this same tab. The active-business cookie is
+    // long-lived for the same reason (see active-business-cookie.ts) and
+    // must not carry a business id from the account that just signed out
+    // into the next owner's session.
+    getQueryClient().clear();
+    clearActiveBusinessCookie();
+
     router.push('/login');
     router.refresh();
   }
