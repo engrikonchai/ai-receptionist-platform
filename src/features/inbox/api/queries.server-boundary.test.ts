@@ -51,7 +51,7 @@ describe('inbox query-options module stays a neutral, server-callable module', (
 
   it('conversationsOptions() is callable as a plain, synchronous function — exactly how a Server Component prefetch call invokes it', () => {
     // This is the literal call site from page.tsx:
-    //   void queryClient.prefetchQuery(conversationsOptions(activeBusinessId));
+    //   await queryClient.fetchQuery(conversationsOptions(activeBusinessId));
     // If `./queries` were a client module, this call alone throws in a
     // real Next.js server render — the bug this test guards against.
     const options = conversationsOptions('biz-1');

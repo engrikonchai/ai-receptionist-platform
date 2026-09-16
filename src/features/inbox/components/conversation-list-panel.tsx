@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo } from 'react';
 import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from '@/components/icons';
@@ -12,7 +12,7 @@ import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
 import { CHANNEL_LABEL } from '../utils/format';
-import { conversationsOptions } from '../api/queries';
+import { conversationsOptions, inboxKeys } from '../api/queries';
 import { SESSION_EXPIRED_MESSAGE } from '../api/types';
 import type { ConversationChannel, ConversationListItem, InboxStatusFilter } from '../api/types';
 import { ChannelIcon } from './channel-icon';
@@ -56,11 +56,55 @@ function ConversationListSkeleton() {
   );
 }
 
+/**
+ * Temporary diagnostic surfaced only inside the "No conversations yet"
+ * empty state — the exact state under investigation — for the
+ * authenticated owner viewing their own Inbox (this whole page already
+ * sits behind dashboard/layout.tsx's auth check; nothing here is a
+ * customer-facing surface). Shows only counts and the business id, all
+ * of which are already visible to this owner elsewhere in the app (the
+ * business switcher, the URL) — never conversation, message, or
+ * customer content. Meant to make "did the count ever reach 5, and at
+ * which stage did it become 0" visible directly on the page, without
+ * needing Vercel log access. Remove once the production cause is
+ * confirmed and resolved.
+ */
+function InboxDiagnosticPanel({
+  businessId,
+  serverConversationCount,
+  clientConversationCount,
+  finalFilteredCount
+}: {
+  businessId: string;
+  serverConversationCount: number | null;
+  clientConversationCount: number;
+  finalFilteredCount: number;
+}) {
+  return (
+    <div className='border-border mt-4 w-full max-w-xs rounded-md border border-dashed p-3 text-left text-xs'>
+      <p className='text-foreground font-medium'>Temporary diagnostics</p>
+      <dl className='text-muted-foreground mt-1.5 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1'>
+        <dt>Business ID</dt>
+        <dd className='truncate'>{businessId}</dd>
+        <dt>Server count</dt>
+        <dd>{serverConversationCount ?? 'fetch failed'}</dd>
+        <dt>Client count</dt>
+        <dd>{clientConversationCount}</dd>
+        <dt>Filtered count</dt>
+        <dd>{finalFilteredCount}</dd>
+      </dl>
+    </div>
+  );
+}
+
 export function ConversationListPanel({
   businessId,
+  serverConversationCount = null,
   className
 }: {
   businessId: string;
+  /** The row count the server-side prefetch actually got, or null if that fetch failed. Temporary diagnostic, shown in the empty state below. */
+  serverConversationCount?: number | null;
   className?: string;
 }) {
   const {
@@ -94,6 +138,36 @@ export function ConversationListPanel({
 
   const errorMessage = error instanceof Error ? error.message : 'Please try again.';
   const isSessionExpired = isError && errorMessage === SESSION_EXPIRED_MESSAGE;
+
+  // Temporary, safe diagnostics for the "Inbox shows 0 conversations"
+  // investigation — logs only the business id, query key, row counts,
+  // and loading/error state (never conversation/customer content,
+  // cookies, or tokens). Goes to the browser console (visible via
+  // DevTools on the authenticated owner's own machine) once the query
+  // settles. Remove once the production cause is confirmed and resolved.
+  useEffect(() => {
+    if (isPending) return;
+    console.error(
+      '[inbox:diagnostic:client]',
+      JSON.stringify({
+        businessId,
+        queryKey: inboxKeys.conversations(businessId),
+        serverConversationCount,
+        clientConversationCount: conversations?.length ?? null,
+        finalFilteredCount: filtered.length,
+        isError,
+        errorMessage: isError ? errorMessage : null
+      })
+    );
+  }, [
+    isPending,
+    isError,
+    businessId,
+    serverConversationCount,
+    conversations,
+    filtered,
+    errorMessage
+  ]);
 
   return (
     <Card className={cn('flex h-full min-h-0 flex-col gap-0 overflow-hidden p-0', className)}>
@@ -218,6 +292,12 @@ export function ConversationListPanel({
             <EmptyDescription>
               New conversations will appear here once customers start chatting.
             </EmptyDescription>
+            <InboxDiagnosticPanel
+              businessId={businessId}
+              serverConversationCount={serverConversationCount}
+              clientConversationCount={conversations.length}
+              finalFilteredCount={filtered.length}
+            />
           </Empty>
         )}
 
