@@ -1,6 +1,9 @@
 import type { SupabaseClient, User } from '@supabase/supabase-js';
+import { ACTIVE_BUSINESS_COOKIE } from '@/lib/active-business-cookie';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
+
+export { ACTIVE_BUSINESS_COOKIE };
 
 /**
  * The signed-in owner's session + the profile/business rows Row Level
@@ -26,14 +29,21 @@ export type OwnerContext =
       supabase: SupabaseClient;
     };
 
-/** Client-side, non-httpOnly cookie the sidebar's BusinessSwitcher writes to. */
-export const ACTIVE_BUSINESS_COOKIE = 'active_business_id';
-
 /**
  * The same "cookie value if it's actually one of this owner's
- * businesses, else the first one" rule used by both the dashboard
- * shell (sidebar) and the Overview page, so they never disagree about
- * which business is "active".
+ * businesses, else the first one" rule used by every business-scoped
+ * page (dashboard shell/sidebar, Overview, Inbox), so they never
+ * disagree about which business is "active".
+ *
+ * `businesses` must always be the *current* RLS-scoped list for the
+ * signed-in owner (fresh on every request — see `loadOwnerContext()`),
+ * never a cached or client-remembered one. That's what makes this
+ * self-healing against a stale `cookieValue`: the cookie is long-lived
+ * (see `active-business-cookie.ts`) and can outlive the business it
+ * points at — e.g. a placeholder business that gets deleted once a real
+ * business is transferred to its owner. A stale id simply fails the
+ * `.some()` check below and falls through to the owner's first
+ * (now-current) business instead of ever being trusted on its own.
  */
 export function resolveActiveBusinessId(
   businesses: BusinessRow[],
