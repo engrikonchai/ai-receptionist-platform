@@ -2,23 +2,24 @@ import { handlePreflight, publicWidgetJson, readJsonBody } from '@/lib/public-wi
 import { corsHeadersFor } from '@/lib/public-widget/origin';
 import {
   checkRateLimit,
-  clientIpFrom,
-  MESSAGE_RATE_LIMIT,
-  RATE_LIMIT_EXCEEDED_MESSAGE
+  RATE_LIMIT_EXCEEDED_MESSAGE,
+  RATE_LIMIT_UNAVAILABLE_MESSAGE
 } from '@/lib/public-widget/rate-limit';
 import { postMessage } from '@/lib/public-widget/runtime';
 import { firstIssueMessage, publicWidgetMessageRequestSchema } from '@/lib/public-widget/schemas';
 
 const RUNTIME_UNAVAILABLE_MESSAGE =
   "The chat assistant isn't available right now. Please try again shortly.";
+const UNAUTHORIZED_MESSAGE = 'This chat session is no longer valid. Please refresh and try again.';
 
 /**
  * Public, unauthenticated endpoint — sends one visitor chat turn.
- * `postMessage()` re-resolves `publicWidgetId` to a business and
- * confirms `conversationId` actually belongs to that business before
- * touching it (src/lib/public-widget/runtime.ts) — a conversation id
- * borrowed from a different business's widget is never readable or
- * writable here.
+ * Requires a valid session token (see
+ * src/lib/public-widget/session-token.ts) whose claims match this
+ * request's own `publicWidgetId`/`conversationId`/`visitorId` and the
+ * freshly resolved business — an unknown, expired, tampered, or
+ * cross-visitor token, and a conversation id that simply doesn't belong
+ * to this business+visitor, all produce the exact same generic 401.
  */
 export async function POST(request: Request) {
   const originHeader = request.headers.get('origin');
@@ -34,9 +35,16 @@ export async function POST(request: Request) {
     return publicWidgetJson(400, { error: firstIssueMessage(parsed.error) });
   }
 
-  const rateLimitKey = `message:${parsed.data.publicWidgetId}:${clientIpFrom(request)}`;
-  if (!checkRateLimit(rateLimitKey, MESSAGE_RATE_LIMIT.limit, MESSAGE_RATE_LIMIT.windowMs)) {
-    return publicWidgetJson(429, { error: RATE_LIMIT_EXCEEDED_MESSAGE }, headers);
+  const rateLimit = await checkRateLimit('message', parsed.data.publicWidgetId, request);
+  if (rateLimit.status === 'limited') {
+    return publicWidgetJson(
+      429,
+      { error: RATE_LIMIT_EXCEEDED_MESSAGE },
+      { ...headers, 'Retry-After': String(rateLimit.retryAfterSeconds) }
+    );
+  }
+  if (rateLimit.status === 'unavailable') {
+    return publicWidgetJson(503, { error: RATE_LIMIT_UNAVAILABLE_MESSAGE }, headers);
   }
 
   const result = await postMessage({
@@ -44,6 +52,7 @@ export async function POST(request: Request) {
     visitorId: parsed.data.visitorId,
     conversationId: parsed.data.conversationId,
     message: parsed.data.message,
+    sessionToken: parsed.data.sessionToken,
     originHeader
   });
 
@@ -60,8 +69,8 @@ export async function POST(request: Request) {
       return publicWidgetJson(200, { enabled: false }, headers);
     case 'unavailable':
       return publicWidgetJson(503, { error: RUNTIME_UNAVAILABLE_MESSAGE }, headers);
-    case 'conversation_not_found':
-      return publicWidgetJson(404, { error: 'Conversation not found.' }, headers);
+    case 'unauthorized':
+      return publicWidgetJson(401, { error: UNAUTHORIZED_MESSAGE }, headers);
     case 'ok':
       return publicWidgetJson(200, { messages: result.messages }, headers);
   }

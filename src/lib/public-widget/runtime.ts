@@ -3,6 +3,11 @@ import type { ConversationRow, MessageRow } from '@/lib/supabase/database.types'
 import { generateKnowledgeReply } from './knowledge-reply';
 import { isOriginAllowed } from './origin';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
+import {
+  isWidgetSessionSigningConfigured,
+  issueWidgetSessionToken,
+  verifyWidgetSessionToken
+} from './session-token';
 
 /**
  * The trusted, in-platform public widget runtime — the multi-tenant
@@ -18,6 +23,13 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
  * row this module writes is scoped to the id this module itself
  * resolved, so a second business's widget can never read or write into
  * a different business's data no matter what a malicious caller sends.
+ *
+ * `business_id` (and `conversation_id` + `visitor_id` agreement) alone
+ * is still not the authorization boundary for reading/writing an
+ * *existing* conversation — see session-token.ts's doc comment. A
+ * signed widget session token, issued here and re-verified on every
+ * message, is what actually proves a caller is the same visitor
+ * `startOrContinueSession()` issued that conversation to.
  */
 
 export type RuntimeMessage = { role: 'user' | 'assistant'; text: string };
@@ -106,22 +118,49 @@ function welcomeMessageFor(widget: Extract<ResolvedWidget, { status: 'ok' }>, la
   return widget.welcomeMessageEn ?? 'Hi! How can we help you today?';
 }
 
+/**
+ * A previously-issued token is only ever honored to resume a
+ * conversation when every claim it carries agrees with both the
+ * current request's own fields and the freshly resolved widget — never
+ * partial agreement. Any mismatch (or no token/conversationId at all)
+ * means "not a valid resume", handled by starting a fresh conversation
+ * instead of erroring.
+ */
+function tokenMatchesResumeRequest(
+  claims: ReturnType<typeof verifyWidgetSessionToken>,
+  params: { publicWidgetId: string; conversationId: string; visitorId: string; businessId: string }
+): boolean {
+  if (!claims) return false;
+  return (
+    claims.publicWidgetId === params.publicWidgetId &&
+    claims.conversationId === params.conversationId &&
+    claims.visitorId === params.visitorId &&
+    claims.businessId === params.businessId
+  );
+}
+
 export type SessionResult =
   | { status: 'unknown' }
   | { status: 'origin_denied' }
   | { status: 'disabled' }
   | { status: 'unavailable' }
-  | { status: 'ok'; conversationId: string; messages: RuntimeMessage[] };
+  | { status: 'ok'; conversationId: string; sessionToken: string; messages: RuntimeMessage[] };
 
 export async function startOrContinueSession(params: {
   publicWidgetId: string;
   visitorId: string;
   language?: string;
   conversationId?: string;
+  sessionToken?: string;
   originHeader: string | null;
 }): Promise<SessionResult> {
   const widget = await resolveWidgetForRuntime(params.publicWidgetId, params.originHeader);
   if (widget.status !== 'ok') return widget;
+
+  // Fail closed before any conversation is created or written — never
+  // spend a database write only to discover afterward that no token
+  // could be issued for it.
+  if (!isWidgetSessionSigningConfigured()) return { status: 'unavailable' };
 
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { status: 'unavailable' };
@@ -129,16 +168,39 @@ export async function startOrContinueSession(params: {
   const language = params.language ?? widget.defaultLanguage;
 
   if (params.conversationId) {
-    const existing = await loadOwnConversation(supabase, widget.businessId, params.conversationId);
-    if (existing) {
-      const messages = await loadMessages(supabase, existing.id);
-      return { status: 'ok', conversationId: existing.id, messages };
+    const claims = verifyWidgetSessionToken(params.sessionToken);
+    const isValidResume = tokenMatchesResumeRequest(claims, {
+      publicWidgetId: params.publicWidgetId,
+      conversationId: params.conversationId,
+      visitorId: params.visitorId,
+      businessId: widget.businessId
+    });
+
+    if (isValidResume) {
+      const existing = await loadOwnConversation(
+        supabase,
+        widget.businessId,
+        params.conversationId,
+        params.visitorId
+      );
+      if (existing) {
+        const token = issueWidgetSessionToken({
+          publicWidgetId: params.publicWidgetId,
+          businessId: widget.businessId,
+          conversationId: existing.id,
+          visitorId: params.visitorId
+        });
+        if (!token) return { status: 'unavailable' };
+
+        const messages = await loadMessages(supabase, existing.id);
+        return { status: 'ok', conversationId: existing.id, sessionToken: token, messages };
+      }
     }
-    // A conversation id was supplied but doesn't belong to this
-    // business (unknown, stale, or — in the malicious case — an id
-    // guessed/borrowed from a different business's widget). Never
-    // resume someone else's conversation; start a fresh one instead of
-    // erroring, exactly like a first-time visitor.
+    // No token, an invalid/mismatched token, or a conversation id that
+    // doesn't actually belong to this business+visitor (unknown, stale,
+    // or — in the malicious case — guessed/borrowed from someone else).
+    // Never resume without full agreement; start a fresh conversation
+    // instead of erroring, exactly like a first-time visitor.
   }
 
   const { data: created, error } = await supabase
@@ -159,6 +221,14 @@ export async function startOrContinueSession(params: {
   if (error || !created) return { status: 'unavailable' };
   const conversationId = (created as { id: string }).id;
 
+  const token = issueWidgetSessionToken({
+    publicWidgetId: params.publicWidgetId,
+    businessId: widget.businessId,
+    conversationId,
+    visitorId: params.visitorId
+  });
+  if (!token) return { status: 'unavailable' };
+
   const welcomeText = welcomeMessageFor(widget, language);
   await supabase.from('messages').insert({
     conversation_id: conversationId,
@@ -169,6 +239,7 @@ export async function startOrContinueSession(params: {
   return {
     status: 'ok',
     conversationId,
+    sessionToken: token,
     messages: [{ role: 'assistant', text: welcomeText }]
   };
 }
@@ -178,18 +249,39 @@ export type MessageResult =
   | { status: 'origin_denied' }
   | { status: 'disabled' }
   | { status: 'unavailable' }
-  | { status: 'conversation_not_found' }
+  | { status: 'unauthorized' }
   | { status: 'ok'; messages: RuntimeMessage[] };
 
+/**
+ * Every failure path here — an unknown/expired/tampered token, a token
+ * whose claims don't match this request's own fields, or a
+ * conversation that doesn't actually belong to this business+visitor —
+ * returns the exact same `'unauthorized'` result. The route handler
+ * turns that into one generic response; a caller can never learn which
+ * of those was true, including whether the conversation id exists at
+ * all.
+ */
 export async function postMessage(params: {
   publicWidgetId: string;
   visitorId: string;
   conversationId: string;
   message: string;
+  sessionToken: string;
   originHeader: string | null;
 }): Promise<MessageResult> {
   const widget = await resolveWidgetForRuntime(params.publicWidgetId, params.originHeader);
   if (widget.status !== 'ok') return widget;
+
+  if (!isWidgetSessionSigningConfigured()) return { status: 'unavailable' };
+
+  const claims = verifyWidgetSessionToken(params.sessionToken);
+  const isAuthorized = tokenMatchesResumeRequest(claims, {
+    publicWidgetId: params.publicWidgetId,
+    conversationId: params.conversationId,
+    visitorId: params.visitorId,
+    businessId: widget.businessId
+  });
+  if (!isAuthorized) return { status: 'unauthorized' };
 
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { status: 'unavailable' };
@@ -197,9 +289,10 @@ export async function postMessage(params: {
   const conversation = await loadOwnConversation(
     supabase,
     widget.businessId,
-    params.conversationId
+    params.conversationId,
+    params.visitorId
   );
-  if (!conversation) return { status: 'conversation_not_found' };
+  if (!conversation) return { status: 'unauthorized' };
 
   await supabase.from('messages').insert({
     conversation_id: conversation.id,
@@ -229,17 +322,19 @@ export async function postMessage(params: {
   return { status: 'ok', messages: [{ role: 'assistant', text: replyText }] };
 }
 
-/** Confirms `conversationId` belongs to `businessId` (the server-resolved one, never a browser-supplied one) before reading or writing anything scoped to it — the cross-tenant isolation boundary this whole module exists to enforce. */
+/** Confirms `conversationId` belongs to both `businessId` (the server-resolved one, never browser-supplied) AND `visitorId` before reading or writing anything scoped to it — a conversation id alone (even under the right business) is never sufficient; this is the actual cross-visitor isolation boundary, on top of the session-token check callers also perform. */
 async function loadOwnConversation(
   supabase: SupabaseClient,
   businessId: string,
-  conversationId: string
+  conversationId: string,
+  visitorId: string
 ): Promise<Pick<ConversationRow, 'id' | 'detected_language' | 'human_takeover'> | null> {
   const { data } = await supabase
     .from('conversations')
     .select('id, detected_language, human_takeover')
     .eq('business_id', businessId)
     .eq('id', conversationId)
+    .eq('visitor_id', visitorId)
     .maybeSingle();
 
   return (

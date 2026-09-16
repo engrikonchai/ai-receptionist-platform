@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RateLimitOutcome, RateLimitRoute } from '@/lib/public-widget/rate-limit';
 import type { SessionResult } from '@/lib/public-widget/runtime';
 import { POST } from './route';
 
 const startOrContinueSession = vi.fn<(params: unknown) => Promise<SessionResult>>();
-const checkRateLimit = vi.fn<(key: string, limit: number, windowMs: number) => boolean>();
+const checkRateLimit =
+  vi.fn<(route: RateLimitRoute, widgetId: string, request: Request) => Promise<RateLimitOutcome>>();
 
 vi.mock('@/lib/public-widget/runtime', () => ({
   startOrContinueSession: (params: unknown) => startOrContinueSession(params)
@@ -35,8 +37,8 @@ const validBody = {
 };
 
 beforeEach(() => {
-  startOrContinueSession.mockReset();
-  checkRateLimit.mockReset().mockReturnValue(true);
+  startOrContinueSession.mockReset().mockResolvedValue({ status: 'unknown' });
+  checkRateLimit.mockReset().mockResolvedValue({ status: 'allowed' });
 });
 
 describe('POST /api/public-widget/session', () => {
@@ -52,12 +54,31 @@ describe('POST /api/public-widget/session', () => {
     expect(startOrContinueSession).not.toHaveBeenCalled();
   });
 
-  it('returns 429 and never calls the runtime once the rate limit is hit', async () => {
-    checkRateLimit.mockReturnValue(false);
+  it('returns 429 with a Retry-After header and never calls the runtime once the rate limit is hit', async () => {
+    checkRateLimit.mockResolvedValue({ status: 'limited', retryAfterSeconds: 17 });
 
     const response = await POST(request(validBody));
 
     expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('17');
+    expect(startOrContinueSession).not.toHaveBeenCalled();
+  });
+
+  it('checks the "session" route’s own limit, not another route’s', async () => {
+    await POST(request(validBody));
+    expect(checkRateLimit).toHaveBeenCalledWith(
+      'session',
+      validBody.publicWidgetId,
+      expect.anything()
+    );
+  });
+
+  it('fails closed with 503 when the durable limiter cannot be reached', async () => {
+    checkRateLimit.mockResolvedValue({ status: 'unavailable' });
+
+    const response = await POST(request(validBody));
+
+    expect(response.status).toBe(503);
     expect(startOrContinueSession).not.toHaveBeenCalled();
   });
 
@@ -97,10 +118,11 @@ describe('POST /api/public-widget/session', () => {
     expect(response.status).toBe(503);
   });
 
-  it('returns the conversation id and messages for an allowed, enabled widget', async () => {
+  it('returns the conversation id, session token, and messages for an allowed, enabled widget', async () => {
     startOrContinueSession.mockResolvedValue({
       status: 'ok',
       conversationId: 'conv-1',
+      sessionToken: 'opaque-token-value',
       messages: [{ role: 'assistant', text: 'Hi!' }]
     });
 
@@ -112,14 +134,17 @@ describe('POST /api/public-widget/session', () => {
     expect(data).toEqual({
       enabled: true,
       conversationId: 'conv-1',
+      sessionToken: 'opaque-token-value',
       messages: [{ role: 'assistant', text: 'Hi!' }]
     });
+    expect(data).not.toHaveProperty('businessId');
   });
 
-  it('never sends a business id to the runtime — only publicWidgetId, visitorId, language, conversationId, and origin', async () => {
+  it('never sends a business id to the runtime — only publicWidgetId, visitorId, language, conversationId, sessionToken, and origin', async () => {
     startOrContinueSession.mockResolvedValue({
       status: 'ok',
       conversationId: 'conv-1',
+      sessionToken: 'token',
       messages: []
     });
 
@@ -130,6 +155,7 @@ describe('POST /api/public-widget/session', () => {
       visitorId: validBody.visitorId,
       language: undefined,
       conversationId: undefined,
+      sessionToken: undefined,
       originHeader: 'https://example.com'
     });
   });

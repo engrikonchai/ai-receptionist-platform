@@ -1,69 +1,105 @@
-/**
- * Best-effort, in-memory rate limiting for the public widget runtime —
- * defense-in-depth only, NOT a production-safe durable limiter.
- *
- * KNOWN LIMITATION, matching ChatbotDemo's own lib/server/rate-limit.ts:
- * this state lives in the Node process's memory. On any platform that
- * runs more than one server instance (Vercel's own serverless/edge
- * deployment model included — each concurrent invocation can be a
- * distinct, short-lived instance with its own memory), a request stream
- * is spread across instances that each keep their own independent
- * counters. The effective limit becomes "N requests per window, per
- * instance" rather than a hard global cap, and a burst spread across
- * enough concurrent instances can exceed the intended limit by a large
- * factor. A determined abuser can trivially exceed the nominal limit.
- *
- * This module is included as one real layer of abuse protection (it
- * does help against a single misbehaving client hitting a single warm
- * instance repeatedly) and is explicitly NOT sufficient on its own.
- * Treat the absence of a durable, cross-instance store (Redis/Upstash or
- * equivalent) as a release blocker for this feature — see the shipped
- * report for this branch.
- */
-
-type Bucket = { count: number; windowStart: number };
-
-const buckets = new Map<string, Bucket>();
-
-const MAX_BUCKETS = 50_000;
-
-function prune(now: number, windowMs: number) {
-  if (buckets.size < MAX_BUCKETS) return;
-  for (const [key, bucket] of buckets) {
-    if (now - bucket.windowStart >= windowMs) buckets.delete(key);
-  }
-}
+import { createHmac } from 'node:crypto';
+import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
 
 /**
- * Fixed-window limiter. Returns `true` when the call is allowed (and
- * counts it), `false` when the key is already over `limit` for the
- * current window. `key` should combine the widget id with the best
- * available per-client signal (IP, falling back to visitor id) — see
- * callers in runtime.ts.
+ * Durable, atomic rate limiting for the public widget runtime, backed
+ * by `public.widget_rate_limits` and `public.check_and_increment_rate_limit`
+ * (see supabase/migrations/20260916130000_widget_rate_limits.sql) —
+ * counting happens in Postgres via a single atomic upsert statement,
+ * so it stays correct across however many concurrent serverless
+ * instances are handling traffic at once. No in-process state lives in
+ * this module; every call is a round trip to the durable store.
+ *
+ * Fails closed: if the hash secret or service-role key isn't
+ * configured, or the database call itself fails, this reports
+ * `'unavailable'` — callers must respond 503, not let the request
+ * through unchecked. An unreachable limiter is exactly the scenario
+ * this exists to guard against (unmetered AI/runtime cost), so silently
+ * allowing traffic through on failure would defeat the entire point.
  */
-export function checkRateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  prune(now, windowMs);
 
-  const existing = buckets.get(key);
-  if (!existing || now - existing.windowStart >= windowMs) {
-    buckets.set(key, { count: 1, windowStart: now });
-    return true;
-  }
+export type RateLimitRoute = 'config' | 'session' | 'message';
 
-  if (existing.count >= limit) return false;
-  existing.count += 1;
-  return true;
-}
+export const RATE_LIMITS: Record<RateLimitRoute, { limit: number; windowSeconds: number }> = {
+  config: { limit: 30, windowSeconds: 60 },
+  session: { limit: 10, windowSeconds: 60 },
+  message: { limit: 20, windowSeconds: 60 }
+};
 
-/** Best-effort client IP from standard proxy headers — never trusted for anything beyond rate-limit bucketing. */
+export type RateLimitOutcome =
+  | { status: 'allowed' }
+  | { status: 'limited'; retryAfterSeconds: number }
+  | { status: 'unavailable' };
+
+export const RATE_LIMIT_EXCEEDED_MESSAGE = 'Too many requests. Please try again shortly.';
+export const RATE_LIMIT_UNAVAILABLE_MESSAGE =
+  "The chat assistant isn't available right now. Please try again shortly.";
+
+/**
+ * The best available per-client signal for bucketing, never stored
+ * raw — only hashed into a bucket key (see `buildBucketKey`). Prefers
+ * `x-vercel-forwarded-for`: on Vercel's platform this header is set by
+ * Vercel's own edge network from the real client connection and can't
+ * be forged by the request itself, unlike a client-supplied
+ * `X-Forwarded-For` value. Falls back to the standard
+ * `x-forwarded-for` / `x-real-ip` headers for non-Vercel deployments —
+ * on a self-hosted deployment behind your own reverse proxy, these are
+ * only as trustworthy as that proxy; make sure it sets (and strips any
+ * client-supplied copy of) whichever header you rely on. With neither
+ * header present, every such request shares one bucket per
+ * route+widget — a stricter effective limit for that traffic, never a
+ * bypass.
+ */
 export function clientIpFrom(request: Request): string {
+  const vercelForwardedFor = request.headers.get('x-vercel-forwarded-for');
+  if (vercelForwardedFor) return vercelForwardedFor.split(',')[0]?.trim() || 'unknown';
+
   const forwardedFor = request.headers.get('x-forwarded-for');
   if (forwardedFor) return forwardedFor.split(',')[0]?.trim() || 'unknown';
+
   return request.headers.get('x-real-ip') ?? 'unknown';
 }
 
-export const SESSION_RATE_LIMIT = { limit: 20, windowMs: 60_000 };
-export const MESSAGE_RATE_LIMIT = { limit: 30, windowMs: 60_000 };
+/** HMAC-SHA256 over `route:publicWidgetId:clientIp` — the only form a client IP ever takes once it reaches storage. Returns `null` when `RATE_LIMIT_HASH_SECRET` isn't configured. */
+function buildBucketKey(
+  route: RateLimitRoute,
+  publicWidgetId: string,
+  clientIp: string
+): string | null {
+  const secret = process.env.RATE_LIMIT_HASH_SECRET;
+  if (!secret) return null;
 
-export const RATE_LIMIT_EXCEEDED_MESSAGE = 'Too many requests. Please try again shortly.';
+  return createHmac('sha256', secret)
+    .update(`${route}:${publicWidgetId}:${clientIp}`)
+    .digest('hex');
+}
+
+type RateLimitRpcRow = { allowed: boolean; retry_after_seconds: number };
+
+export async function checkRateLimit(
+  route: RateLimitRoute,
+  publicWidgetId: string,
+  request: Request
+): Promise<RateLimitOutcome> {
+  const bucketKey = buildBucketKey(route, publicWidgetId, clientIpFrom(request));
+  if (!bucketKey) return { status: 'unavailable' };
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { status: 'unavailable' };
+
+  const { limit, windowSeconds } = RATE_LIMITS[route];
+
+  const { data, error } = await supabase
+    .rpc('check_and_increment_rate_limit', {
+      p_bucket_key: bucketKey,
+      p_limit: limit,
+      p_window_seconds: windowSeconds
+    })
+    .single();
+
+  if (error || !data) return { status: 'unavailable' };
+
+  const row = data as RateLimitRpcRow;
+  if (!row.allowed) return { status: 'limited', retryAfterSeconds: row.retry_after_seconds };
+  return { status: 'allowed' };
+}

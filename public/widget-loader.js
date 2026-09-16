@@ -13,9 +13,11 @@
  * module loader is present. It talks only to this platform's own
  * public, unauthenticated API (/api/public-widget/*), which validates
  * the widget id, enabled state, and this page's origin before ever
- * forwarding anything to the real chat runtime — see
- * src/lib/public-widget/proxy.ts in the platform repo for that
- * contract. It never receives or needs any secret key.
+ * touching the database — see src/lib/public-widget/runtime.ts in the
+ * platform repo for that contract. A resumed conversation also carries
+ * an opaque `sessionToken` this script stores and replays verbatim
+ * (see src/lib/public-widget/session-token.ts) — it never receives or
+ * needs any actual secret key.
  */
 (function () {
   'use strict';
@@ -36,6 +38,7 @@
   var API_ORIGIN = new URL(currentScript.src, window.location.href).origin;
   var VISITOR_KEY = 'aireceptionist:' + widgetId + ':visitor-id';
   var CONVERSATION_KEY = 'aireceptionist:' + widgetId + ':conversation-id';
+  var SESSION_TOKEN_KEY = 'aireceptionist:' + widgetId + ':session-token';
 
   function getOrCreateVisitorId() {
     try {
@@ -63,6 +66,22 @@
   function setStoredConversationId(id) {
     try {
       window.localStorage.setItem(CONVERSATION_KEY, id);
+    } catch {
+      /* ignore — worst case, next load starts a fresh conversation */
+    }
+  }
+
+  function getStoredSessionToken() {
+    try {
+      return window.localStorage.getItem(SESSION_TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  }
+
+  function setStoredSessionToken(token) {
+    try {
+      window.localStorage.setItem(SESSION_TOKEN_KEY, token);
     } catch {
       /* ignore — worst case, next load starts a fresh conversation */
     }
@@ -201,14 +220,21 @@
       return postJson('/api/public-widget/session', {
         publicWidgetId: widgetId,
         visitorId: visitorId,
-        conversationId: getStoredConversationId() || undefined
+        conversationId: getStoredConversationId() || undefined,
+        sessionToken: getStoredSessionToken() || undefined
       }).then(function (result) {
-        if (!result.ok || result.data.enabled === false || !result.data.conversationId) {
+        if (
+          !result.ok ||
+          result.data.enabled === false ||
+          !result.data.conversationId ||
+          !result.data.sessionToken
+        ) {
           addBubble('assistant', 'Chat is temporarily unavailable. Please try again shortly.');
           return false;
         }
         conversationId = result.data.conversationId;
         setStoredConversationId(conversationId);
+        setStoredSessionToken(result.data.sessionToken);
         (result.data.messages || []).forEach(function (m) {
           addBubble(m.role === 'user' ? 'user' : 'assistant', m.text);
         });
@@ -226,7 +252,8 @@
         publicWidgetId: widgetId,
         visitorId: visitorId,
         conversationId: conversationId,
-        message: text
+        message: text,
+        sessionToken: getStoredSessionToken()
       })
         .then(function (result) {
           if (!result.ok || !result.data.messages) {

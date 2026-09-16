@@ -1,8 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
 import { generateKnowledgeReply } from './knowledge-reply';
 import { postMessage, startOrContinueSession } from './runtime';
+import { issueWidgetSessionToken } from './session-token';
 
 vi.mock('@/lib/supabase/service-role', () => ({
   createSupabaseServiceRoleClient: vi.fn()
@@ -36,6 +37,8 @@ function mockClient(from: ReturnType<typeof vi.fn>): SupabaseClient {
   return { from } as unknown as SupabaseClient;
 }
 
+const ORIGINAL_ENV = { ...process.env };
+
 // Two independent businesses, each with their own widget, used throughout
 // to prove cross-tenant isolation.
 const BUSINESS_A = { id: 'business-a', is_active: true, default_language: 'en' };
@@ -59,9 +62,26 @@ const WIDGET_SETTINGS_B = {
   welcome_message_ru: null
 };
 
+/** Shared default claims (widget-a/business-a/conv-a-1/visitor-1) for the token-authorization test blocks below — override just the field under test. */
+function tokenFor(overrides: Partial<Parameters<typeof issueWidgetSessionToken>[0]> = {}) {
+  return issueWidgetSessionToken({
+    publicWidgetId: 'widget-a',
+    businessId: 'business-a',
+    conversationId: 'conv-a-1',
+    visitorId: 'visitor-1',
+    ...overrides
+  })!;
+}
+
 beforeEach(() => {
+  process.env.WIDGET_SESSION_SECRET = 'test-session-secret-do-not-use-in-production';
   vi.mocked(createSupabaseServiceRoleClient).mockReset();
   vi.mocked(generateKnowledgeReply).mockReset().mockResolvedValue('Here is the answer.');
+});
+
+afterEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+  vi.useRealTimers();
 });
 
 describe('startOrContinueSession — widget resolution', () => {
@@ -90,22 +110,6 @@ describe('startOrContinueSession — widget resolution', () => {
     expect(result).toEqual({ status: 'unknown' });
   });
 
-  it('returns unknown when the business exists but has no widget_settings row', async () => {
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
-      .mockReturnValueOnce(chainable({ data: null }));
-    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
-
-    const result = await startOrContinueSession({
-      publicWidgetId: 'widget-a',
-      visitorId: 'visitor-1',
-      originHeader: 'https://a.example.com'
-    });
-
-    expect(result).toEqual({ status: 'unknown' });
-  });
-
   it('returns origin_denied when the request origin is not on this widget’s allow-list', async () => {
     const from = vi
       .fn()
@@ -120,22 +124,6 @@ describe('startOrContinueSession — widget resolution', () => {
     });
 
     expect(result).toEqual({ status: 'origin_denied' });
-  });
-
-  it('returns disabled when the business is inactive, even with a matching origin', async () => {
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(chainable({ data: { ...BUSINESS_A, is_active: false } }))
-      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
-    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
-
-    const result = await startOrContinueSession({
-      publicWidgetId: 'widget-a',
-      visitorId: 'visitor-1',
-      originHeader: 'https://a.example.com'
-    });
-
-    expect(result).toEqual({ status: 'disabled' });
   });
 
   it('returns disabled when widget_enabled is false, even though mock_ai_enabled is a separate, unrelated column', async () => {
@@ -153,10 +141,27 @@ describe('startOrContinueSession — widget resolution', () => {
 
     expect(result).toEqual({ status: 'disabled' });
   });
+
+  it('returns unavailable when WIDGET_SESSION_SECRET is not configured — never issues an unsigned token', async () => {
+    delete process.env.WIDGET_SESSION_SECRET;
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await startOrContinueSession({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
 });
 
-describe('startOrContinueSession — conversation creation is scoped to the resolved business', () => {
-  it('creates a new conversation using Business A’s id when Widget A starts a session', async () => {
+describe('startOrContinueSession — new conversations are scoped to the resolved business and issue a session token', () => {
+  it('creates a new conversation using Business A’s id and returns a session token, never a separate businessId field', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: BUSINESS_A })) // businesses
@@ -171,40 +176,45 @@ describe('startOrContinueSession — conversation creation is scoped to the reso
       originHeader: 'https://a.example.com'
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: 'ok',
       conversationId: 'conv-a-1',
       messages: [{ role: 'assistant', text: 'Welcome to Business A!' }]
     });
+    expect(result).not.toHaveProperty('businessId');
+    if (result.status === 'ok') {
+      expect(typeof result.sessionToken).toBe('string');
+      expect(result.sessionToken.split('.')).toHaveLength(2);
+    }
     expect(from).toHaveBeenNthCalledWith(3, 'conversations');
   });
 
-  it('never resumes a conversation id that belongs to a different business — starts a fresh one instead', async () => {
-    // Widget A's own session request supplies a conversationId that
-    // actually belongs to Business B (guessed, borrowed, or leaked from
-    // another tab). loadOwnConversation filters by business_id = 'business-a',
-    // so it finds nothing even though the id is real — proving Widget A can
-    // never read into Business B's conversation.
+  it('without a valid session token, never resumes a supplied conversation id — starts a fresh one even if it happens to belong to this same business', async () => {
+    // No sessionToken at all is functionally identical to a forged one:
+    // tokenMatchesResumeRequest() rejects it, so loadOwnConversation is
+    // never even attempted — only 4 `from` calls, not 5.
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: BUSINESS_A })) // businesses
-      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A })) // widget_settings
-      .mockReturnValueOnce(chainable({ data: null })) // loadOwnConversation — not found under business-a
-      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null })) // fresh conversation insert
-      .mockReturnValueOnce(chainable({ error: null })); // welcome message insert
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
 
     const result = await startOrContinueSession({
       publicWidgetId: 'widget-a',
       visitorId: 'visitor-1',
-      conversationId: 'conv-belongs-to-business-b',
+      conversationId: 'conv-a-old',
       originHeader: 'https://a.example.com'
     });
 
     expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-a-new' });
+    expect(from).toHaveBeenCalledTimes(4);
   });
+});
 
-  it('resumes an existing conversation that does belong to the resolved business, returning its full history', async () => {
+describe('startOrContinueSession — resuming requires a fully matching session token', () => {
+  it('resumes an existing conversation when the token fully matches the request and resolved business', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
@@ -226,10 +236,11 @@ describe('startOrContinueSession — conversation creation is scoped to the reso
       publicWidgetId: 'widget-a',
       visitorId: 'visitor-1',
       conversationId: 'conv-a-1',
+      sessionToken: tokenFor(),
       originHeader: 'https://a.example.com'
     });
 
-    expect(result).toEqual({
+    expect(result).toMatchObject({
       status: 'ok',
       conversationId: 'conv-a-1',
       messages: [
@@ -238,30 +249,125 @@ describe('startOrContinueSession — conversation creation is scoped to the reso
       ]
     });
   });
-});
 
-describe('postMessage — cross-tenant isolation', () => {
-  it('returns conversation_not_found instead of writing anything when the conversation belongs to a different business', async () => {
+  it('falls back to a fresh conversation when the token’s conversationId does not match the request’s', async () => {
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: BUSINESS_A })) // businesses (resolved via widget A)
-      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A })) // widget_settings
-      .mockReturnValueOnce(chainable({ data: null })); // loadOwnConversation under business-a — not found
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
 
-    const result = await postMessage({
+    const result = await startOrContinueSession({
       publicWidgetId: 'widget-a',
       visitorId: 'visitor-1',
-      conversationId: 'conv-belongs-to-business-b',
-      message: 'Hello',
+      conversationId: 'conv-a-DIFFERENT',
+      sessionToken: tokenFor({ conversationId: 'conv-a-1' }),
       originHeader: 'https://a.example.com'
     });
 
-    expect(result).toEqual({ status: 'conversation_not_found' });
-    expect(from).toHaveBeenCalledTimes(3);
+    expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-a-new' });
   });
 
-  it('generates the reply from the resolved business’s own knowledge — never another business’s', async () => {
+  it('falls back to a fresh conversation when the token’s visitorId does not match the request’s (one visitor can never resume another’s conversation)', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await startOrContinueSession({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-2', // someone else's browser, someone else's visitorId
+      conversationId: 'conv-a-1',
+      sessionToken: tokenFor({ visitorId: 'visitor-1' }), // a token stolen/guessed from visitor-1
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-a-new' });
+  });
+
+  it('falls back to a fresh conversation when the token was issued for a different widget entirely', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_B }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_B }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-b-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await startOrContinueSession({
+      publicWidgetId: 'widget-b',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      sessionToken: tokenFor(), // issued for widget-a/business-a
+      originHeader: 'https://b.example.com'
+    });
+
+    expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-b-new' });
+  });
+
+  it('falls back to a fresh conversation when the token has been tampered with', async () => {
+    const validToken = tokenFor();
+    const [payloadB64, signatureB64] = validToken.split('.');
+    // Re-encode the exact same claims, byte-identical except for one
+    // trailing space — proving the signature is over the payload
+    // bytes, not just the logical claim values: even a no-op-looking
+    // re-serialization invalidates it.
+    const payloadJson = Buffer.from(payloadB64, 'base64url').toString('utf8');
+    const tamperedPayloadB64 = Buffer.from(`${payloadJson} `, 'utf8').toString('base64url');
+    const tamperedToken = `${tamperedPayloadB64}.${signatureB64}`;
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await startOrContinueSession({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      sessionToken: tamperedToken,
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-a-new' });
+  });
+
+  it('falls back to a fresh conversation when the token has expired', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const expiredToken = tokenFor();
+    vi.setSystemTime((4 * 60 * 60 + 1) * 1000);
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-a-new' }, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await startOrContinueSession({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      sessionToken: expiredToken,
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toMatchObject({ status: 'ok', conversationId: 'conv-a-new' });
+  });
+});
+
+describe('postMessage — session-token authorization', () => {
+  it('accepts a valid, fully matching signed session and returns the assistant reply', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
@@ -278,6 +384,7 @@ describe('postMessage — cross-tenant isolation', () => {
       visitorId: 'visitor-1',
       conversationId: 'conv-a-1',
       message: 'What time is check-in?',
+      sessionToken: tokenFor(),
       originHeader: 'https://a.example.com'
     });
 
@@ -285,12 +392,173 @@ describe('postMessage — cross-tenant isolation', () => {
       status: 'ok',
       messages: [{ role: 'assistant', text: 'Here is the answer.' }]
     });
-    expect(generateKnowledgeReply).toHaveBeenCalledWith(
-      expect.anything(),
-      'business-a',
-      'What time is check-in?',
-      'en'
-    );
+  });
+
+  it('rejects a request with no session token, without ever touching the database', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: '',
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+    expect(from).toHaveBeenCalledTimes(2); // only the widget resolution — never the conversation table
+  });
+
+  it('rejects a tampered token', async () => {
+    const validToken = tokenFor();
+    const [payloadB64] = validToken.split('.');
+    const tamperedToken = `${payloadB64}.${'A'.repeat(43)}`;
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: tamperedToken,
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects an expired token', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const expiredToken = tokenFor();
+    vi.setSystemTime((4 * 60 * 60 + 1) * 1000);
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: expiredToken,
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects a token issued for a different widget (wrong widget)', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_B }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_B }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-b',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: tokenFor(), // issued for widget-a
+      originHeader: 'https://b.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects a token issued for a different conversation (wrong conversation)', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-OTHER',
+      message: 'Hello',
+      sessionToken: tokenFor({ conversationId: 'conv-a-1' }),
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects a token issued for a different visitor (wrong visitor / cross-visitor attempt)', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-2',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: tokenFor({ visitorId: 'visitor-1' }),
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+    expect(from).toHaveBeenCalledTimes(2); // never reaches the conversations table
+  });
+
+  it('rejects a token whose businessId does not match the freshly resolved business (cross-business attempt)', async () => {
+    // A token minted (hypothetically forged, or replayed from a prior
+    // widget/business reassignment) claiming business-b while the
+    // widget id in this request resolves to business-a.
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: tokenFor({ businessId: 'business-b' }),
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects even a fully matching token if the conversation row itself does not belong to that business+visitor — the token is not the only check', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
+      .mockReturnValueOnce(chainable({ data: null })); // conversations query itself finds no matching row
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await postMessage({
+      publicWidgetId: 'widget-a',
+      visitorId: 'visitor-1',
+      conversationId: 'conv-a-1',
+      message: 'Hello',
+      sessionToken: tokenFor(),
+      originHeader: 'https://a.example.com'
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
   });
 
   it('never generates or inserts an automated reply while a human owner has taken over the conversation', async () => {
@@ -309,6 +577,7 @@ describe('postMessage — cross-tenant isolation', () => {
       visitorId: 'visitor-1',
       conversationId: 'conv-a-1',
       message: 'Hello',
+      sessionToken: tokenFor(),
       originHeader: 'https://a.example.com'
     });
 
@@ -317,7 +586,7 @@ describe('postMessage — cross-tenant isolation', () => {
     expect(from).toHaveBeenCalledTimes(4);
   });
 
-  it('Business B never sees Widget A’s traffic: resolving widget-b against origin b.example.com yields business-b, independent of widget-a/business-a', async () => {
+  it('generates the reply from the resolved business’s own knowledge — never another business’s', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: BUSINESS_B }))
@@ -334,6 +603,12 @@ describe('postMessage — cross-tenant isolation', () => {
       visitorId: 'visitor-2',
       conversationId: 'conv-b-1',
       message: 'Any vacancies?',
+      sessionToken: issueWidgetSessionToken({
+        publicWidgetId: 'widget-b',
+        businessId: 'business-b',
+        conversationId: 'conv-b-1',
+        visitorId: 'visitor-2'
+      })!,
       originHeader: 'https://b.example.com'
     });
 

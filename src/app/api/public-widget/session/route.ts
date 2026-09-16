@@ -2,9 +2,8 @@ import { handlePreflight, publicWidgetJson, readJsonBody } from '@/lib/public-wi
 import { corsHeadersFor } from '@/lib/public-widget/origin';
 import {
   checkRateLimit,
-  clientIpFrom,
   RATE_LIMIT_EXCEEDED_MESSAGE,
-  SESSION_RATE_LIMIT
+  RATE_LIMIT_UNAVAILABLE_MESSAGE
 } from '@/lib/public-widget/rate-limit';
 import { startOrContinueSession } from '@/lib/public-widget/runtime';
 import { firstIssueMessage, publicWidgetSessionRequestSchema } from '@/lib/public-widget/schemas';
@@ -17,7 +16,9 @@ const RUNTIME_UNAVAILABLE_MESSAGE =
  * session. Never accepts a `business_id`; `startOrContinueSession()`
  * resolves the request's `publicWidgetId` to a business itself (see
  * src/lib/public-widget/runtime.ts) and every row it creates is scoped
- * to that resolved business.
+ * to that resolved business. A resumed session also requires a valid,
+ * matching session token (see src/lib/public-widget/session-token.ts) —
+ * without one it always starts a fresh conversation instead of erroring.
  */
 export async function POST(request: Request) {
   const originHeader = request.headers.get('origin');
@@ -33,9 +34,16 @@ export async function POST(request: Request) {
     return publicWidgetJson(400, { error: firstIssueMessage(parsed.error) });
   }
 
-  const rateLimitKey = `session:${parsed.data.publicWidgetId}:${clientIpFrom(request)}`;
-  if (!checkRateLimit(rateLimitKey, SESSION_RATE_LIMIT.limit, SESSION_RATE_LIMIT.windowMs)) {
-    return publicWidgetJson(429, { error: RATE_LIMIT_EXCEEDED_MESSAGE }, headers);
+  const rateLimit = await checkRateLimit('session', parsed.data.publicWidgetId, request);
+  if (rateLimit.status === 'limited') {
+    return publicWidgetJson(
+      429,
+      { error: RATE_LIMIT_EXCEEDED_MESSAGE },
+      { ...headers, 'Retry-After': String(rateLimit.retryAfterSeconds) }
+    );
+  }
+  if (rateLimit.status === 'unavailable') {
+    return publicWidgetJson(503, { error: RATE_LIMIT_UNAVAILABLE_MESSAGE }, headers);
   }
 
   const result = await startOrContinueSession({
@@ -43,6 +51,7 @@ export async function POST(request: Request) {
     visitorId: parsed.data.visitorId,
     language: parsed.data.language,
     conversationId: parsed.data.conversationId,
+    sessionToken: parsed.data.sessionToken,
     originHeader
   });
 
@@ -62,7 +71,12 @@ export async function POST(request: Request) {
     case 'ok':
       return publicWidgetJson(
         200,
-        { enabled: true, conversationId: result.conversationId, messages: result.messages },
+        {
+          enabled: true,
+          conversationId: result.conversationId,
+          sessionToken: result.sessionToken,
+          messages: result.messages
+        },
         headers
       );
   }

@@ -1,14 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RateLimitOutcome, RateLimitRoute } from '@/lib/public-widget/rate-limit';
 import type { WidgetPublicConfigRpcResult } from '@/lib/supabase/database.types';
 import { GET } from './route';
 
 const fetchWidgetPublicConfig =
   vi.fn<(id: string, origin: string | null) => Promise<WidgetPublicConfigRpcResult | null>>();
+const checkRateLimit =
+  vi.fn<(route: RateLimitRoute, widgetId: string, request: Request) => Promise<RateLimitOutcome>>();
 
 vi.mock('@/lib/public-widget/config', () => ({
   fetchWidgetPublicConfig: (id: string, origin: string | null) =>
     fetchWidgetPublicConfig(id, origin)
 }));
+
+vi.mock('@/lib/public-widget/rate-limit', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/public-widget/rate-limit')>(
+    '@/lib/public-widget/rate-limit'
+  );
+  return {
+    ...actual,
+    checkRateLimit: (...args: Parameters<typeof actual.checkRateLimit>) => checkRateLimit(...args)
+  };
+});
 
 function config(overrides: Partial<WidgetPublicConfigRpcResult> = {}): WidgetPublicConfigRpcResult {
   return {
@@ -37,12 +50,37 @@ const WIDGET_ID = '11111111-1111-4111-8111-111111111111';
 
 beforeEach(() => {
   fetchWidgetPublicConfig.mockReset();
+  checkRateLimit.mockReset().mockResolvedValue({ status: 'allowed' });
 });
 
 describe('GET /api/public-widget/config', () => {
   it('returns 400 for a missing widgetId', async () => {
     const response = await GET(request(null));
     expect(response.status).toBe(400);
+    expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
+  });
+
+  it('checks the "config" route’s own rate limit', async () => {
+    await GET(request(WIDGET_ID));
+    expect(checkRateLimit).toHaveBeenCalledWith('config', WIDGET_ID, expect.anything());
+  });
+
+  it('returns 429 with a Retry-After header once the rate limit is hit', async () => {
+    checkRateLimit.mockResolvedValue({ status: 'limited', retryAfterSeconds: 5 });
+
+    const response = await GET(request(WIDGET_ID));
+
+    expect(response.status).toBe(429);
+    expect(response.headers.get('Retry-After')).toBe('5');
+    expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
+  });
+
+  it('fails closed with 503 when the durable limiter cannot be reached', async () => {
+    checkRateLimit.mockResolvedValue({ status: 'unavailable' });
+
+    const response = await GET(request(WIDGET_ID));
+
+    expect(response.status).toBe(503);
     expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
   });
 

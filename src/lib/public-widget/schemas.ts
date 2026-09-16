@@ -14,19 +14,24 @@ const publicWidgetIdSchema = z.uuid({ message: 'Invalid widget id.' });
 const conversationIdSchema = z.uuid({ message: 'Invalid conversation id.' });
 const visitorIdSchema = z.string().trim().min(8).max(200, { message: 'Invalid visitor id.' });
 const languageSchema = z.enum(['en', 'me', 'ru']);
+/** Opaque `<base64url payload>.<base64url signature>` string — see session-token.ts. Shape-checked here only; signature/expiry/claim verification happens in runtime.ts. */
+const sessionTokenSchema = z.string().trim().min(1).max(4000);
 
 export const publicWidgetSessionRequestSchema = z.object({
   publicWidgetId: publicWidgetIdSchema,
   visitorId: visitorIdSchema,
   language: languageSchema.optional(),
-  conversationId: conversationIdSchema.optional()
+  conversationId: conversationIdSchema.optional(),
+  /** Presented only when resuming a previous conversation — a first-time visitor's session request has neither this nor conversationId. */
+  sessionToken: sessionTokenSchema.optional()
 });
 
 export const publicWidgetMessageRequestSchema = z.object({
   publicWidgetId: publicWidgetIdSchema,
   visitorId: visitorIdSchema,
   conversationId: conversationIdSchema,
-  message: z.string().trim().min(1, 'Message cannot be empty.').max(2000)
+  message: z.string().trim().min(1, 'Message cannot be empty.').max(2000),
+  sessionToken: sessionTokenSchema
 });
 
 export function firstIssueMessage(error: z.ZodError): string {

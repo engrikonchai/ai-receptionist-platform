@@ -1,6 +1,11 @@
 import { fetchWidgetPublicConfig } from '@/lib/public-widget/config';
 import { handlePreflight, publicWidgetJson } from '@/lib/public-widget/http';
 import { corsHeadersFor } from '@/lib/public-widget/origin';
+import {
+  checkRateLimit,
+  RATE_LIMIT_EXCEEDED_MESSAGE,
+  RATE_LIMIT_UNAVAILABLE_MESSAGE
+} from '@/lib/public-widget/rate-limit';
 
 /**
  * Public, unauthenticated, read-only endpoint — the cosmetic/display
@@ -26,6 +31,18 @@ export async function GET(request: Request) {
 
   if (!publicWidgetId) {
     return publicWidgetJson(400, { error: 'Missing widgetId.' }, headers);
+  }
+
+  const rateLimit = await checkRateLimit('config', publicWidgetId, request);
+  if (rateLimit.status === 'limited') {
+    return publicWidgetJson(
+      429,
+      { error: RATE_LIMIT_EXCEEDED_MESSAGE },
+      { ...headers, 'Retry-After': String(rateLimit.retryAfterSeconds) }
+    );
+  }
+  if (rateLimit.status === 'unavailable') {
+    return publicWidgetJson(503, { error: RATE_LIMIT_UNAVAILABLE_MESSAGE }, headers);
   }
 
   const config = await fetchWidgetPublicConfig(publicWidgetId, originHeader);

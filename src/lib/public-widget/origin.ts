@@ -79,7 +79,7 @@ export function isOriginAllowed(originHeader: string | null, allowedOrigins: str
  * `isOriginAllowed()` — never `*`, and never called for a request whose
  * origin wasn't allowed.
  */
-export function corsHeadersFor(originHeader: string): HeadersInit {
+export function corsHeadersFor(originHeader: string): Record<string, string> {
   return {
     'Access-Control-Allow-Origin': originHeader,
     'Access-Control-Allow-Methods': 'POST, OPTIONS',
