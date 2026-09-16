@@ -8,10 +8,13 @@
  *
  * The exceptions are this repo's own additive migrations:
  * `profiles.onboarding_completed` / `onboarding_completed_at`
- * (supabase/migrations/20260915000100_platform_onboarding.sql), and
+ * (supabase/migrations/20260915000100_platform_onboarding.sql),
  * `messages.sender_type` / `messages.client_message_id`
- * (supabase/migrations/20260915170200_inbox_human_replies.sql) — see
- * each file's header for why it's safe. Neither has been applied yet.
+ * (supabase/migrations/20260915170200_inbox_human_replies.sql), and
+ * `widget_settings.allowed_origins` plus the `widget_public_config` view
+ * (supabase/migrations/20260916120000_widget_allowed_origins.sql) — see
+ * each file's header for why it's safe. None of these have been applied
+ * yet.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -150,6 +153,31 @@ export interface WidgetSettingsRow {
   position: WidgetPosition;
   mock_ai_enabled: boolean;
   human_handoff_enabled: boolean;
+  /** Website origins (scheme + host) allowed to embed this widget. Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
+  allowed_origins: string[];
   created_at: string;
   updated_at: string;
+}
+
+/**
+ * The public-safe subset of businesses + widget_settings exposed by the
+ * `public.widget_public_config` view (same migration as above, not
+ * applied yet) — the only thing the public widget/chat proxy
+ * (src/app/api/public-widget/*) reads with the anon key. Never includes
+ * business_id, owner_id, handoff_email, or anything else private.
+ */
+export interface WidgetPublicConfigRow {
+  public_widget_id: string;
+  business_active: boolean;
+  supported_languages: string[];
+  default_language: string;
+  title: string;
+  welcome_message_en: string | null;
+  welcome_message_me: string | null;
+  welcome_message_ru: string | null;
+  primary_color: string;
+  position: WidgetPosition;
+  widget_enabled: boolean;
+  human_handoff_enabled: boolean;
+  allowed_origins: string[];
 }

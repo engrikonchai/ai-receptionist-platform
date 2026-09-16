@@ -16,14 +16,7 @@ import { ActiveConversationPanel } from './active-conversation-panel';
 import { CustomerDetailsPanel } from './customer-details-panel';
 import { CustomerDetailsSheet } from './customer-details-sheet';
 
-export function InboxView({
-  businessId,
-  serverConversationCount = null
-}: {
-  businessId: string;
-  /** The row count the server-side prefetch actually got, or null if that fetch failed. Temporary diagnostic — see ConversationListPanel. */
-  serverConversationCount?: number | null;
-}) {
+export function InboxView({ businessId }: { businessId: string }) {
   const {
     data: conversations,
     isPending,
@@ -83,7 +76,6 @@ export function InboxView({
     <div className='flex h-[calc(100dvh-5.5rem)] min-h-0 w-full min-w-0 gap-3 overflow-hidden'>
       <ConversationListPanel
         businessId={businessId}
-        serverConversationCount={serverConversationCount}
         className={cn(
           'min-w-0 w-full md:w-[300px] md:shrink-0 lg:w-[320px]',
           mobileView === 'thread' ? 'hidden md:flex' : 'flex'
