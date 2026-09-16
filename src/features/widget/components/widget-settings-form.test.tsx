@@ -119,6 +119,52 @@ describe('WidgetSettingsForm — live preview', () => {
   });
 });
 
+describe('WidgetSettingsForm — allowed website origins', () => {
+  it('placeholders the field as a full origin, e.g. https://example.com', () => {
+    renderForm();
+
+    const input = screen.getByLabelText(/Add a website origins that may embed this widget/i);
+    expect(input).toHaveAttribute('placeholder', 'https://example.com');
+  });
+
+  it('mentions that a path is not allowed, with a concrete example', () => {
+    renderForm();
+
+    expect(screen.getByText(/no path/i)).toBeInTheDocument();
+    expect(screen.getByText('https://example.com/about')).toBeInTheDocument();
+  });
+
+  it('rejects an origin with a path immediately on add, with a specific message, and never adds it as a badge', async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    const input = screen.getByLabelText(/Add a website origins that may embed this widget/i);
+    await user.type(input, 'https://example.com/about-us');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(
+      await screen.findByText(
+        'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+      )
+    ).toBeInTheDocument();
+    // No badge (and so no "remove" button) was created for the rejected entry.
+    expect(
+      screen.queryByRole('button', { name: 'Remove https://example.com/about-us' })
+    ).not.toBeInTheDocument();
+  });
+
+  it('accepts a valid bare domain immediately, adding it as a badge exactly as typed', async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    const input = screen.getByLabelText(/Add a website origins that may embed this widget/i);
+    await user.type(input, 'new-site.com');
+    await user.click(screen.getByRole('button', { name: 'Add' }));
+
+    expect(await screen.findByRole('button', { name: 'Remove new-site.com' })).toBeInTheDocument();
+  });
+});
+
 describe('WidgetSettingsForm — human handoff', () => {
   it('requires a handoff email once human hand-off is turned on', async () => {
     const user = userEvent.setup();

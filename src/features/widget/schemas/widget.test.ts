@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { widgetSettingsSchema } from './widget';
+import { describeInvalidOrigin, widgetSettingsSchema } from './widget';
 
 const baseValues = {
   enabled: true,
@@ -156,6 +156,20 @@ describe('widgetSettingsSchema — allowed origins', () => {
     ).toBe(false);
   });
 
+  it('gives a path-specific error message, distinct from the generic invalid-origin message, when the entry has a path', () => {
+    const result = widgetSettingsSchema('en').safeParse({
+      ...baseValues,
+      allowedOrigins: ['example.com/about']
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      const issue = result.error.issues.find((i) => i.path.includes('allowedOrigins'));
+      expect(issue?.message).toBe(
+        'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+      );
+    }
+  });
+
   it('rejects a wildcard entry', () => {
     const result = widgetSettingsSchema('en').safeParse({
       ...baseValues,
@@ -173,5 +187,47 @@ describe('widgetSettingsSchema — allowed origins', () => {
     if (result.success) {
       expect(result.data.allowedOrigins).toEqual(['https://localhost:3000']);
     }
+  });
+});
+
+describe('describeInvalidOrigin — the same messages the TagsField uses for immediate, add-time feedback', () => {
+  it('returns null for a valid bare domain or full origin', () => {
+    expect(describeInvalidOrigin('example.com')).toBeNull();
+    expect(describeInvalidOrigin('https://example.com')).toBeNull();
+  });
+
+  it('flags a path specifically, distinct from other invalid-origin reasons', () => {
+    expect(describeInvalidOrigin('example.com/about')).toBe(
+      'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+    );
+    expect(describeInvalidOrigin('https://example.com/about')).toBe(
+      'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+    );
+  });
+
+  it('flags a query string or fragment the same way as a path', () => {
+    expect(describeInvalidOrigin('example.com?x=1')).toBe(
+      'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+    );
+    expect(describeInvalidOrigin('example.com#section')).toBe(
+      'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.'
+    );
+  });
+
+  it('gives the generic message for a malformed domain that has no path', () => {
+    expect(describeInvalidOrigin('not a domain')).toBe(
+      'Enter a valid website origin, e.g. https://example.com.'
+    );
+  });
+
+  it('gives the empty-input message for a blank entry', () => {
+    expect(describeInvalidOrigin('')).toBe('Enter a domain.');
+    expect(describeInvalidOrigin('   ')).toBe('Enter a domain.');
+  });
+
+  it('gives the length message for an overly long entry', () => {
+    expect(describeInvalidOrigin(`https://${'a'.repeat(250)}.com`)).toBe(
+      'Keep it under 253 characters.'
+    );
   });
 });

@@ -13,6 +13,43 @@ const HEX_COLOR_PATTERN = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 export const WIDGET_POSITION_VALUES = ['bottom-right', 'bottom-left'] as const;
 export type WidgetPositionValue = (typeof WIDGET_POSITION_VALUES)[number];
 
+const GENERIC_INVALID_ORIGIN_MESSAGE = 'Enter a valid website origin, e.g. https://example.com.';
+const PATH_NOT_ALLOWED_MESSAGE =
+  'Enter just the origin, without a path — e.g. https://example.com, not https://example.com/about.';
+
+/**
+ * True when `value` (after the same optional-scheme default
+ * `normalizeOrigin()` itself applies) parses to a URL with anything
+ * beyond a bare origin — a path, query string, or fragment. Used only
+ * to pick a more specific error message; `normalizeOrigin()` is still
+ * the single source of truth for whether the value is actually valid.
+ */
+function hasPathQueryOrHash(value: string): boolean {
+  const trimmed = value.trim();
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+  try {
+    const url = new URL(candidate);
+    return (url.pathname !== '/' && url.pathname !== '') || url.search !== '' || url.hash !== '';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Returns a user-facing error message for an invalid allowed-origin
+ * entry, or `null` if it's valid — shared between the Zod schema below
+ * (submit-time) and the TagsField's `validate` prop in
+ * widget-settings-form.tsx (immediate, on add), so both surfaces agree
+ * on the exact same wording for the exact same mistake.
+ */
+export function describeInvalidOrigin(value: string): string | null {
+  const trimmed = value.trim();
+  if (!trimmed) return 'Enter a domain.';
+  if (trimmed.length > 253) return 'Keep it under 253 characters.';
+  if (normalizeOrigin(trimmed)) return null;
+  return hasPathQueryOrHash(trimmed) ? PATH_NOT_ALLOWED_MESSAGE : GENERIC_INVALID_ORIGIN_MESSAGE;
+}
+
 /**
  * An owner types a bare domain (e.g. "example.com") or a full origin
  * (e.g. "https://example.com") — `normalizeOrigin()` (shared with the
@@ -34,7 +71,9 @@ const originHostSchema = z
     if (!normalized) {
       ctx.addIssue({
         code: 'custom',
-        message: 'Enter a valid domain (e.g. example.com or https://example.com).'
+        message: hasPathQueryOrHash(value)
+          ? PATH_NOT_ALLOWED_MESSAGE
+          : GENERIC_INVALID_ORIGIN_MESSAGE
       });
       return z.NEVER;
     }
