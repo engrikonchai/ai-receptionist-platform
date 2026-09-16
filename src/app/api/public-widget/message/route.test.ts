@@ -127,6 +127,8 @@ describe('POST /api/public-widget/message', () => {
     expect(response.status).toBe(200);
     const data = await response.json();
     expect(data).toEqual({ messages: [{ role: 'assistant', text: 'Hi!' }] });
+    expect(data).not.toHaveProperty('businessId');
+    expect(data).not.toHaveProperty('business_id');
   });
 
   it('rejects a message over the length limit before ever calling the runtime', async () => {

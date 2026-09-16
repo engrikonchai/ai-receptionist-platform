@@ -6,7 +6,6 @@ const ORIGINAL_ENV = { ...process.env };
 
 const CLAIMS = {
   publicWidgetId: 'widget-a',
-  businessId: 'business-a',
   conversationId: 'conv-a-1',
   visitorId: 'visitor-1'
 };
@@ -38,6 +37,18 @@ describe('verifyWidgetSessionToken', () => {
     const token = issueWidgetSessionToken(CLAIMS);
     const verified = verifyWidgetSessionToken(token);
     expect(verified).toEqual(CLAIMS);
+  });
+
+  it('never includes businessId in the decoded payload — the browser can read this payload, so it must never carry it', () => {
+    const token = issueWidgetSessionToken(CLAIMS)!;
+    const [payloadB64] = token.split('.');
+    const decoded = JSON.parse(Buffer.from(payloadB64, 'base64url').toString('utf8'));
+
+    expect(decoded).not.toHaveProperty('businessId');
+    expect(decoded).not.toHaveProperty('business_id');
+    expect(Object.keys(decoded).toSorted()).toEqual(
+      ['conversationId', 'exp', 'iat', 'publicWidgetId', 'visitorId'].toSorted()
+    );
   });
 
   it('rejects a token with no signature at all', () => {
@@ -114,10 +125,29 @@ describe('verifyWidgetSessionToken', () => {
 
   it('rejects a payload missing a required claim', () => {
     const secret = process.env.WIDGET_SESSION_SECRET!;
-    const incomplete = { publicWidgetId: 'widget-a', businessId: 'business-a' };
+    const incomplete = { publicWidgetId: 'widget-a', conversationId: 'conv-a-1' };
     const payloadB64 = Buffer.from(JSON.stringify(incomplete), 'utf8').toString('base64url');
     const signatureB64 = createHmac('sha256', secret).update(payloadB64).digest('base64url');
 
     expect(verifyWidgetSessionToken(`${payloadB64}.${signatureB64}`)).toBeNull();
+  });
+
+  it('rejects a payload that includes a forged businessId claim alongside the real ones — extra fields never get trusted back in', () => {
+    const secret = process.env.WIDGET_SESSION_SECRET!;
+    const withForgedBusinessId = {
+      ...CLAIMS,
+      businessId: 'business-forged',
+      iat: 0,
+      exp: 9_999_999_999
+    };
+    const payloadB64 = Buffer.from(JSON.stringify(withForgedBusinessId), 'utf8').toString(
+      'base64url'
+    );
+    const signatureB64 = createHmac('sha256', secret).update(payloadB64).digest('base64url');
+
+    const verified = verifyWidgetSessionToken(`${payloadB64}.${signatureB64}`);
+    expect(verified).not.toBeNull();
+    expect(verified).not.toHaveProperty('businessId');
+    expect(verified).toEqual(CLAIMS);
   });
 });

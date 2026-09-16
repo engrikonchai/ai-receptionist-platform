@@ -138,6 +138,7 @@ describe('POST /api/public-widget/session', () => {
       messages: [{ role: 'assistant', text: 'Hi!' }]
     });
     expect(data).not.toHaveProperty('businessId');
+    expect(data).not.toHaveProperty('business_id');
   });
 
   it('never sends a business id to the runtime — only publicWidgetId, visitorId, language, conversationId, sessionToken, and origin', async () => {

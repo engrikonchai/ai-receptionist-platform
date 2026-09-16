@@ -29,7 +29,11 @@ import {
  * *existing* conversation — see session-token.ts's doc comment. A
  * signed widget session token, issued here and re-verified on every
  * message, is what actually proves a caller is the same visitor
- * `startOrContinueSession()` issued that conversation to.
+ * `startOrContinueSession()` issued that conversation to. That token
+ * deliberately never carries `business_id` (it's a signed, not
+ * encrypted, base64url payload — readable by the browser even though
+ * it can't be modified) — every function below re-resolves
+ * `business_id` itself from `publicWidgetId` on every call instead.
  */
 
 export type RuntimeMessage = { role: 'user' | 'assistant'; text: string };
@@ -120,22 +124,25 @@ function welcomeMessageFor(widget: Extract<ResolvedWidget, { status: 'ok' }>, la
 
 /**
  * A previously-issued token is only ever honored to resume a
- * conversation when every claim it carries agrees with both the
- * current request's own fields and the freshly resolved widget — never
- * partial agreement. Any mismatch (or no token/conversationId at all)
- * means "not a valid resume", handled by starting a fresh conversation
+ * conversation when every claim it carries agrees with the current
+ * request's own fields — never partial agreement. Deliberately does
+ * NOT check a `businessId` claim: the token never carries one (see
+ * session-token.ts's doc comment) — `businessId` for the actual
+ * conversation lookup always comes from this request's own freshly
+ * resolved widget, never from anything the token or the browser
+ * supplied. Any mismatch (or no token/conversationId at all) means
+ * "not a valid resume", handled by starting a fresh conversation
  * instead of erroring.
  */
 function tokenMatchesResumeRequest(
   claims: ReturnType<typeof verifyWidgetSessionToken>,
-  params: { publicWidgetId: string; conversationId: string; visitorId: string; businessId: string }
+  params: { publicWidgetId: string; conversationId: string; visitorId: string }
 ): boolean {
   if (!claims) return false;
   return (
     claims.publicWidgetId === params.publicWidgetId &&
     claims.conversationId === params.conversationId &&
-    claims.visitorId === params.visitorId &&
-    claims.businessId === params.businessId
+    claims.visitorId === params.visitorId
   );
 }
 
@@ -172,11 +179,13 @@ export async function startOrContinueSession(params: {
     const isValidResume = tokenMatchesResumeRequest(claims, {
       publicWidgetId: params.publicWidgetId,
       conversationId: params.conversationId,
-      visitorId: params.visitorId,
-      businessId: widget.businessId
+      visitorId: params.visitorId
     });
 
     if (isValidResume) {
+      // widget.businessId — resolved fresh, above, from publicWidgetId —
+      // is the only source of businessId for this lookup. The token
+      // never carries one.
       const existing = await loadOwnConversation(
         supabase,
         widget.businessId,
@@ -186,7 +195,6 @@ export async function startOrContinueSession(params: {
       if (existing) {
         const token = issueWidgetSessionToken({
           publicWidgetId: params.publicWidgetId,
-          businessId: widget.businessId,
           conversationId: existing.id,
           visitorId: params.visitorId
         });
@@ -223,7 +231,6 @@ export async function startOrContinueSession(params: {
 
   const token = issueWidgetSessionToken({
     publicWidgetId: params.publicWidgetId,
-    businessId: widget.businessId,
     conversationId,
     visitorId: params.visitorId
   });
@@ -278,14 +285,17 @@ export async function postMessage(params: {
   const isAuthorized = tokenMatchesResumeRequest(claims, {
     publicWidgetId: params.publicWidgetId,
     conversationId: params.conversationId,
-    visitorId: params.visitorId,
-    businessId: widget.businessId
+    visitorId: params.visitorId
   });
   if (!isAuthorized) return { status: 'unauthorized' };
 
   const supabase = createSupabaseServiceRoleClient();
   if (!supabase) return { status: 'unavailable' };
 
+  // widget.businessId — resolved fresh, above, from publicWidgetId — is
+  // the only source of businessId for this lookup. The token never
+  // carries one; conversation_id + this resolved business_id +
+  // visitor_id together are what authorize the read/write.
   const conversation = await loadOwnConversation(
     supabase,
     widget.businessId,

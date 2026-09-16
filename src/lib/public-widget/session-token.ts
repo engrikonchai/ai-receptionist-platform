@@ -4,29 +4,34 @@ import { createHmac, timingSafeEqual } from 'node:crypto';
  * Signed, expiring widget session tokens — the actual conversation
  * authorization boundary for the public widget runtime.
  *
- * `business_id` alone was never enough: any two requests that agreed
- * on `publicWidgetId` + `conversationId` (both of which a browser
- * supplies) could resolve to the same business and read/write the same
- * conversation, regardless of which visitor actually owns it. This
- * token is how the server proves a specific (widget, business,
- * conversation, visitor) tuple was legitimately issued by
- * `startOrContinueSession()` — a caller can present matching request
- * fields, but without this HMAC they cannot fabricate a token the
- * server will accept, so a guessed or leaked conversation id alone is
- * never sufficient.
+ * `business_id` agreement alone was never enough: any two requests that
+ * agreed on `publicWidgetId` + `conversationId` (both of which a
+ * browser supplies) could resolve to the same business and read/write
+ * the same conversation, regardless of which visitor actually owns it.
+ * This token is how the server proves a specific (widget, conversation,
+ * visitor) tuple was legitimately issued by `startOrContinueSession()`
+ * — a caller can present matching request fields, but without this
+ * HMAC they cannot fabricate a token the server will accept, so a
+ * guessed or leaked conversation id alone is never sufficient.
  *
  * This is a signed token, not an encrypted one — HMAC-SHA256 proves
  * the payload wasn't modified after issuance, it does not hide the
- * payload's contents from anyone who base64-decodes it. It is still
- * never sent to the browser as a labeled, separate `businessId` field
- * (see runtime.ts) — only as this one opaque token string.
+ * payload's contents from anyone who base64url-decodes it (which is a
+ * trivial, reversible encoding, not encryption). That is exactly why
+ * `businessId` is NEVER included in this payload: unlike
+ * `publicWidgetId`/`conversationId`/`visitorId` (all of which the
+ * browser already knows — it sent them itself), `businessId` is
+ * server-internal and must never be readable by the browser, decoded
+ * token or not. Every caller (runtime.ts) re-resolves `businessId`
+ * itself from `publicWidgetId` on every request instead, and uses that
+ * freshly resolved value — never a value carried in the token — to
+ * scope every conversation read/write.
  */
 
 const WIDGET_SESSION_TOKEN_TTL_SECONDS = 4 * 60 * 60; // 4 hours — generous for one chat session.
 
 export type WidgetSessionTokenClaims = {
   publicWidgetId: string;
-  businessId: string;
   conversationId: string;
   visitorId: string;
 };
@@ -106,7 +111,6 @@ export function verifyWidgetSessionToken(
     typeof payload.exp !== 'number' ||
     typeof payload.iat !== 'number' ||
     typeof payload.publicWidgetId !== 'string' ||
-    typeof payload.businessId !== 'string' ||
     typeof payload.conversationId !== 'string' ||
     typeof payload.visitorId !== 'string'
   ) {
@@ -118,7 +122,6 @@ export function verifyWidgetSessionToken(
 
   return {
     publicWidgetId: payload.publicWidgetId,
-    businessId: payload.businessId,
     conversationId: payload.conversationId,
     visitorId: payload.visitorId
   };

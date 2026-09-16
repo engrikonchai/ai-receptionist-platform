@@ -62,11 +62,10 @@ const WIDGET_SETTINGS_B = {
   welcome_message_ru: null
 };
 
-/** Shared default claims (widget-a/business-a/conv-a-1/visitor-1) for the token-authorization test blocks below — override just the field under test. */
+/** Shared default claims (widget-a/conv-a-1/visitor-1 — no businessId; see session-token.ts) for the token-authorization test blocks below — override just the field under test. */
 function tokenFor(overrides: Partial<Parameters<typeof issueWidgetSessionToken>[0]> = {}) {
   return issueWidgetSessionToken({
     publicWidgetId: 'widget-a',
-    businessId: 'business-a',
     conversationId: 'conv-a-1',
     visitorId: 'visitor-1',
     ...overrides
@@ -184,7 +183,14 @@ describe('startOrContinueSession — new conversations are scoped to the resolve
     expect(result).not.toHaveProperty('businessId');
     if (result.status === 'ok') {
       expect(typeof result.sessionToken).toBe('string');
-      expect(result.sessionToken.split('.')).toHaveLength(2);
+      const [payloadB64] = result.sessionToken.split('.');
+      expect(payloadB64).toBeDefined();
+      const decoded = JSON.parse(Buffer.from(payloadB64!, 'base64url').toString('utf8'));
+      expect(decoded).not.toHaveProperty('businessId');
+      expect(decoded).not.toHaveProperty('business_id');
+      expect(Object.keys(decoded).toSorted()).toEqual(
+        ['conversationId', 'exp', 'iat', 'publicWidgetId', 'visitorId'].toSorted()
+      );
     }
     expect(from).toHaveBeenNthCalledWith(3, 'conversations');
   });
@@ -519,34 +525,21 @@ describe('postMessage — session-token authorization', () => {
     expect(from).toHaveBeenCalledTimes(2); // never reaches the conversations table
   });
 
-  it('rejects a token whose businessId does not match the freshly resolved business (cross-business attempt)', async () => {
-    // A token minted (hypothetically forged, or replayed from a prior
-    // widget/business reassignment) claiming business-b while the
-    // widget id in this request resolves to business-a.
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
-      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }));
-    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
-
-    const result = await postMessage({
-      publicWidgetId: 'widget-a',
-      visitorId: 'visitor-1',
-      conversationId: 'conv-a-1',
-      message: 'Hello',
-      sessionToken: tokenFor({ businessId: 'business-b' }),
-      originHeader: 'https://a.example.com'
-    });
-
-    expect(result).toEqual({ status: 'unauthorized' });
-  });
-
-  it('rejects even a fully matching token if the conversation row itself does not belong to that business+visitor — the token is not the only check', async () => {
+  it('rejects a fully matching token (right widget, conversation, visitor) when the conversation row itself belongs to a different business — cross-business attempt', async () => {
+    // The token carries no businessId at all (see session-token.ts) —
+    // there is nothing in it to mismatch. The actual cross-business
+    // guard is that loadOwnConversation() always queries scoped to
+    // `widget.businessId`, freshly resolved here from publicWidgetId,
+    // never a value carried by the token or sent by the browser. If the
+    // conversation id in this request actually belongs to a different
+    // business (e.g. reused across a widget reassignment, or simply
+    // forged), that query returns no row even though every token claim
+    // matches perfectly.
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
       .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A }))
-      .mockReturnValueOnce(chainable({ data: null })); // conversations query itself finds no matching row
+      .mockReturnValueOnce(chainable({ data: null })); // conversations query, scoped to business-a, finds nothing
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
 
     const result = await postMessage({
@@ -605,7 +598,6 @@ describe('postMessage — session-token authorization', () => {
       message: 'Any vacancies?',
       sessionToken: issueWidgetSessionToken({
         publicWidgetId: 'widget-b',
-        businessId: 'business-b',
         conversationId: 'conv-b-1',
         visitorId: 'visitor-2'
       })!,
