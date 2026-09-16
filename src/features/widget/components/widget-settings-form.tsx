@@ -10,6 +10,7 @@ import { useAppForm } from '@/lib/form';
 import { saveWidgetSettingsMutation } from '../api/queries';
 import type { WidgetSettings } from '../api/types';
 import {
+  describeInvalidOrigin,
   WIDGET_HANDOFF_EMAIL_MAX_LENGTH,
   WIDGET_NAME_MAX_LENGTH,
   WIDGET_WELCOME_MESSAGE_MAX_LENGTH,
@@ -273,16 +274,20 @@ export function WidgetSettingsForm({
                 mode='array'
                 children={(field) => (
                   <field.TagsField
-                    label='Domains that may embed this widget'
-                    placeholder='example.com'
+                    label='Website origins that may embed this widget'
+                    placeholder='https://example.com'
+                    validate={describeInvalidOrigin}
                   />
                 )}
               />
             </FieldSet>
             <p className='text-muted-foreground mt-2 text-xs'>
-              The widget only responds to requests from these domains. Add your live website&apos;s
-              domain (e.g. <code className='bg-muted rounded px-1 py-0.5'>example.com</code>) before
-              installing — with none added, the widget won&apos;t respond anywhere yet.
+              The widget only responds to requests from these origins. Add your live website&apos;s
+              full origin, including <code className='bg-muted rounded px-1 py-0.5'>https://</code>{' '}
+              (e.g. <code className='bg-muted rounded px-1 py-0.5'>https://example.com</code>)
+              before installing — no path (not{' '}
+              <code className='bg-muted rounded px-1 py-0.5'>https://example.com/about</code>), and
+              with none added, the widget won&apos;t respond anywhere yet.
             </p>
           </CardContent>
         </Card>

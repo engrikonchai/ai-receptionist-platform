@@ -13,10 +13,10 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-  SidebarRail
+  SidebarRail,
+  useSidebar
 } from '@/components/ui/sidebar';
 import { navGroups } from '@/config/nav-config';
-import { useMediaQuery } from '@/hooks/use-media-query';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
@@ -38,12 +38,21 @@ export default function AppSidebar({
   initialActiveBusinessId: string | null;
 }) {
   const pathname = usePathname();
-  const { isOpen } = useMediaQuery();
+  const { isMobile, setOpenMobile } = useSidebar();
   const filteredGroups = useFilteredNavGroups(navGroups);
 
-  React.useEffect(() => {
-    // Side effects based on sidebar state changes
-  }, [isOpen]);
+  // On mobile, the sidebar renders as an overlay Sheet (see ui/sidebar.tsx).
+  // dashboard/layout.tsx's SidebarProvider is shared across every
+  // /dashboard/* route, so a same-layout client-side navigation (e.g.
+  // tapping "Widget" while on Inbox) does NOT remount it — `openMobile`
+  // carries over unchanged. Without this, the Sheet stays open and
+  // visually covers the page the Link just navigated to, so the tap
+  // looks like it "did nothing" even though the URL underneath already
+  // changed. Only closes on mobile — desktop's persistent sidebar column
+  // isn't a modal overlay and has nothing to close.
+  const closeMobileSidebar = React.useCallback(() => {
+    if (isMobile) setOpenMobile(false);
+  }, [isMobile, setOpenMobile]);
 
   return (
     <Sidebar collapsible='icon'>
@@ -84,7 +93,13 @@ export default function AppSidebar({
                         {item.items?.map((subItem) => (
                           <SidebarMenuSubItem key={subItem.title}>
                             <SidebarMenuSubButton
-                              render={<Link href={subItem.url} aria-label={subItem.title} />}
+                              render={
+                                <Link
+                                  href={subItem.url}
+                                  aria-label={subItem.title}
+                                  onClick={closeMobileSidebar}
+                                />
+                              }
                               isActive={pathname === subItem.url}
                             >
                               <span>{subItem.title}</span>
@@ -97,7 +112,13 @@ export default function AppSidebar({
                 ) : (
                   <SidebarMenuItem key={item.title}>
                     <SidebarMenuButton
-                      render={<Link href={item.url} aria-label={item.title} />}
+                      render={
+                        <Link
+                          href={item.url}
+                          aria-label={item.title}
+                          onClick={closeMobileSidebar}
+                        />
+                      }
                       tooltip={item.title}
                       isActive={pathname === item.url}
                     >
