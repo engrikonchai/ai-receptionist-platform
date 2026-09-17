@@ -112,7 +112,9 @@ describe('POST /api/stripe/webhook — configuration and signature', () => {
 describe('POST /api/stripe/webhook — idempotency', () => {
   it('returns 200 for an already-processed event without reprocessing it', async () => {
     constructEventAsync.mockResolvedValue(fakeEvent({}));
-    const from = vi.fn().mockReturnValueOnce(chainable({ data: { stripe_event_id: 'evt_123' } }));
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: { stripe_event_id: 'evt_123' }, error: null }));
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
 
     const response = await POST(request('{}'));
@@ -128,7 +130,7 @@ describe('POST /api/stripe/webhook — idempotency', () => {
     );
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: null })) // duplicate check: not found
+      .mockReturnValueOnce(chainable({ data: null, error: null })) // duplicate check: not found
       .mockReturnValueOnce(chainable({ error: null })); // ledger insert
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
     syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
@@ -144,7 +146,7 @@ describe('POST /api/stripe/webhook — idempotency', () => {
     constructEventAsync.mockResolvedValue(
       fakeEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1' } } })
     );
-    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null, error: null }));
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
     syncSubscriptionFromStripe.mockResolvedValue({ ok: false, reason: 'db_error' });
 
@@ -155,23 +157,124 @@ describe('POST /api/stripe/webhook — idempotency', () => {
   });
 });
 
-describe('POST /api/stripe/webhook — event synchronization', () => {
+describe('POST /api/stripe/webhook — fail-closed ledger error handling', () => {
+  it('returns 500 when the initial duplicate-check lookup itself fails, without processing the event', async () => {
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1' } } })
+    );
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: { message: 'connection reset' } }));
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(500);
+    expect(syncSubscriptionFromStripe).not.toHaveBeenCalled();
+  });
+
+  it('returns 500 when the final ledger insert fails for a reason other than a duplicate-key violation', async () => {
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1' } } })
+    );
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce(
+        chainable({ error: { code: '53300', message: 'too many connections' } })
+      );
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(500);
+  });
+
+  it('returns 200 when the ledger insert fails with a unique-violation — a concurrent identical delivery already recorded it', async () => {
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1' } } })
+    );
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce(chainable({ error: { code: '23505', message: 'duplicate key' } }));
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(200);
+  });
+
+  it('reprocesses successfully on retry after a prior ledger-write failure, since no row was recorded', async () => {
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({ type: 'customer.subscription.updated', data: { object: { id: 'sub_1' } } })
+    );
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+
+    // First delivery: processing succeeds but the ledger insert fails.
+    const failingFrom = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce(
+        chainable({ error: { code: '53300', message: 'too many connections' } })
+      );
+    createSupabaseServiceRoleClient.mockReturnValueOnce(mockClient(failingFrom));
+    const firstResponse = await POST(request('{}'));
+    expect(firstResponse.status).toBe(500);
+
+    // Retry: no ledger row exists (the failed insert never landed), so
+    // this is correctly treated as a fresh delivery and reprocessed —
+    // resulting in a real, non-throwing sync call and a successful
+    // ledger write.
+    const succeedingFrom = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    createSupabaseServiceRoleClient.mockReturnValueOnce(mockClient(succeedingFrom));
+    const secondResponse = await POST(request('{}'));
+
+    expect(secondResponse.status).toBe(200);
+    expect(syncSubscriptionFromStripe).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('POST /api/stripe/webhook — invalid completed checkout is never acknowledged', () => {
   function setUpNewEvent() {
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: null }))
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
       .mockReturnValueOnce(chainable({ error: null }));
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
     syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
     return from;
   }
 
-  it('resolves the subscription id from checkout.session.completed and syncs it', async () => {
+  it('fails (500, no ledger row) a subscription-mode checkout.session.completed with no subscription attached', async () => {
+    const from = setUpNewEvent();
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({
+        type: 'checkout.session.completed',
+        data: { object: { mode: 'subscription', subscription: null } }
+      })
+    );
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(500);
+    expect(syncSubscriptionFromStripe).not.toHaveBeenCalled();
+    // Only the duplicate-check read happened — processing threw before
+    // ever reaching the ledger insert.
+    expect(from).toHaveBeenCalledTimes(1);
+  });
+
+  it('still processes a subscription-mode checkout.session.completed that does have a subscription attached', async () => {
     setUpNewEvent();
     constructEventAsync.mockResolvedValue(
       fakeEvent({
         type: 'checkout.session.completed',
-        data: { object: { subscription: 'sub_42' } }
+        data: { object: { mode: 'subscription', subscription: 'sub_42' } }
       })
     );
 
@@ -185,16 +288,50 @@ describe('POST /api/stripe/webhook — event synchronization', () => {
     );
   });
 
-  it('never syncs a checkout session with no subscription attached', async () => {
+  it('does not fail a non-subscription-mode checkout.session.completed with no subscription — not this app’s billing concern', async () => {
     setUpNewEvent();
     constructEventAsync.mockResolvedValue(
-      fakeEvent({ type: 'checkout.session.completed', data: { object: { subscription: null } } })
+      fakeEvent({
+        type: 'checkout.session.completed',
+        data: { object: { mode: 'payment', subscription: null } }
+      })
     );
 
     const response = await POST(request('{}'));
 
     expect(response.status).toBe(200);
     expect(syncSubscriptionFromStripe).not.toHaveBeenCalled();
+  });
+});
+
+describe('POST /api/stripe/webhook — event synchronization', () => {
+  function setUpNewEvent() {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+    return from;
+  }
+
+  it('resolves the subscription id from checkout.session.completed and syncs it', async () => {
+    setUpNewEvent();
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({
+        type: 'checkout.session.completed',
+        data: { object: { mode: 'subscription', subscription: 'sub_42' } }
+      })
+    );
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(200);
+    expect(syncSubscriptionFromStripe).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'sub_42'
+    );
   });
 
   it.each([

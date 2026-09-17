@@ -19,7 +19,9 @@
  * — confirmed applied), `handoffs.client_request_id`
  * (supabase/migrations/20260918090000_handoff_idempotency.sql — NOT
  * applied yet), and the two brand-new tables
- * `business_subscriptions` / `stripe_webhook_events`
+ * `business_subscriptions` / `stripe_webhook_events` /
+ * `billing_checkout_attempts`, plus the `sync_business_subscription()`
+ * RPC
  * (supabase/migrations/20260919090000_business_subscriptions.sql — NOT
  * applied yet) — see each file's header for why it's safe.
  *
@@ -216,27 +218,56 @@ export type BusinessSubscriptionStatus =
 /**
  * One row per business's Stripe subscription lifecycle — see
  * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
- * applied yet). Written only by the service-role key, from the
- * verified Stripe webhook handler and the checkout/portal server
- * actions' own customer-id backfill (src/features/billing/api/service.ts)
- * — never directly by a dashboard request. Row is never deleted on
- * cancellation.
+ * applied yet). Written only by the service-role key: the verified
+ * Stripe webhook handler via the sync_business_subscription() RPC, and
+ * the checkout/portal server actions' own service-role reads/writes
+ * (src/features/billing/api/service.ts) — never directly by a plain
+ * authenticated-client write. Row is never deleted on cancellation.
+ *
+ * `authenticated` can only SELECT a subset of these columns (see the
+ * migration's column-level grant) — stripe_customer_id,
+ * stripe_subscription_id, and stripe_subscription_created_at are never
+ * readable through that role; only service-role code (always gated by
+ * verifyActiveBusiness()) reads them.
  */
 export interface BusinessSubscriptionRow {
   id: string;
   business_id: string;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
+  /** Stripe's own `subscription.created` — the durable ordering key sync_business_subscription() uses to refuse a delayed webhook from an older, superseded subscription. Not readable by `authenticated`. */
+  stripe_subscription_created_at: string | null;
   stripe_price_id: string | null;
   status: BusinessSubscriptionStatus;
   trial_start: string | null;
   trial_end: string | null;
+  /** Immutable once set — the first time a subscription with a real trial_start syncs for this business. Never cleared by a later sync, a resubscribe, or a duplicate/stale webhook. Gates whether startCheckout() may offer another 14-day trial. */
+  trial_used_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   canceled_at: string | null;
   created_at: string;
   updated_at: string;
+  /** Generated column (`stripe_customer_id is not null`) — the only customer-related fact `authenticated` may read. */
+  has_stripe_customer: boolean;
+}
+
+/**
+ * Durable Checkout-creation idempotency — at most one `status='pending'`
+ * row per business at a time (enforced by a unique partial index). See
+ * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * applied yet). Read and written only by the service-role key, from
+ * src/features/billing/api/checkout-attempts.ts, always after
+ * verifyActiveBusiness().
+ */
+export interface BillingCheckoutAttemptRow {
+  id: string;
+  business_id: string;
+  status: 'pending' | 'completed' | 'expired' | 'abandoned';
+  stripe_checkout_session_id: string | null;
+  created_at: string;
+  expires_at: string;
 }
 
 /**

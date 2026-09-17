@@ -12,6 +12,9 @@ const getStripeClient = vi.fn();
 const getStripePriceId = vi.fn();
 const isStripeConfigured = vi.fn();
 const getSiteUrl = vi.fn();
+const createSupabaseServiceRoleClient = vi.fn();
+const claimCheckoutAttempt = vi.fn();
+const recordCheckoutSession = vi.fn();
 
 vi.mock('@/lib/stripe/client', () => ({
   getStripeClient: (...args: unknown[]) => getStripeClient(...args),
@@ -21,6 +24,15 @@ vi.mock('@/lib/stripe/client', () => ({
 
 vi.mock('@/lib/site-url', () => ({
   getSiteUrl: (...args: unknown[]) => getSiteUrl(...args)
+}));
+
+vi.mock('@/lib/supabase/service-role', () => ({
+  createSupabaseServiceRoleClient: (...args: unknown[]) => createSupabaseServiceRoleClient(...args)
+}));
+
+vi.mock('./checkout-attempts', () => ({
+  claimCheckoutAttempt: (...args: unknown[]) => claimCheckoutAttempt(...args),
+  recordCheckoutSession: (...args: unknown[]) => recordCheckoutSession(...args)
 }));
 
 /** Same stand-in for Supabase's PostgREST query builder used across this repo's other service.test.ts files. */
@@ -46,10 +58,10 @@ function chainable<T>(result: T) {
 const stubUser = { id: 'user-1' } as unknown as User;
 const VERIFIED_BUSINESS_ID = 'biz-1';
 
-function mockVerifiedBusiness(from: ReturnType<typeof vi.fn>, businessId = VERIFIED_BUSINESS_ID) {
+function mockVerifiedBusiness(businessId = VERIFIED_BUSINESS_ID) {
   vi.mocked(verifyActiveBusiness).mockResolvedValue({
     ok: true,
-    ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId }
+    ctx: { supabase: {} as unknown as SupabaseClient, user: stubUser, businessId }
   });
 }
 
@@ -60,6 +72,10 @@ beforeEach(() => {
   getSiteUrl.mockReturnValue(TEST_SITE_URL);
   isStripeConfigured.mockReturnValue(true);
   getStripePriceId.mockReturnValue('price_123');
+  // Default: claim always wins outright (no concurrent attempt in play)
+  // — individual tests override this to exercise the reuse/retry paths.
+  claimCheckoutAttempt.mockResolvedValue({ kind: 'new', attemptId: 'attempt-1' });
+  recordCheckoutSession.mockResolvedValue(undefined);
 });
 
 describe('startCheckout — authorization', () => {
@@ -75,6 +91,7 @@ describe('startCheckout — authorization', () => {
 
     expect(result).toEqual({ status: 'error', error: SESSION_EXPIRED_MESSAGE });
     expect(createSession).not.toHaveBeenCalled();
+    expect(createSupabaseServiceRoleClient).not.toHaveBeenCalled();
   });
 
   it('rejects a business id that does not belong to the signed-in owner (cross-business)', async () => {
@@ -94,21 +111,29 @@ describe('startCheckout — authorization', () => {
 
 describe('startCheckout — configuration', () => {
   it('returns not_configured when Stripe is not configured', async () => {
-    const from = vi.fn();
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
     getStripeClient.mockReturnValue(null);
 
     const result = await startCheckout('biz-1');
 
     expect(result).toEqual({ status: 'not_configured' });
-    expect(from).not.toHaveBeenCalled();
+    expect(createSupabaseServiceRoleClient).not.toHaveBeenCalled();
   });
 
   it('returns not_configured when no price id is configured', async () => {
-    const from = vi.fn();
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
     getStripePriceId.mockReturnValue(null);
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: vi.fn() } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'not_configured' });
+  });
+
+  it('returns not_configured when the service-role client is unavailable', async () => {
+    mockVerifiedBusiness();
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: vi.fn() } } });
+    createSupabaseServiceRoleClient.mockReturnValue(null);
 
     const result = await startCheckout('biz-1');
 
@@ -120,8 +145,11 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
   it('refuses to start a second Checkout when the business already has active access', async () => {
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: { status: 'active', stripe_customer_id: 'cus_1' } }));
-    mockVerifiedBusiness(from);
+      .mockReturnValueOnce(
+        chainable({ data: { status: 'active', stripe_customer_id: 'cus_1', trial_used_at: null } })
+      );
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createSession = vi.fn();
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
@@ -129,15 +157,17 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
 
     expect(result).toEqual({ status: 'already_subscribed' });
     expect(createSession).not.toHaveBeenCalled();
+    expect(claimCheckoutAttempt).not.toHaveBeenCalled();
   });
 
   it('refuses to start a second Checkout while trialing', async () => {
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(
-        chainable({ data: { status: 'trialing', stripe_customer_id: 'cus_1' } })
-      );
-    mockVerifiedBusiness(from);
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: { status: 'trialing', stripe_customer_id: 'cus_1', trial_used_at: '2026-01-01' }
+      })
+    );
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createSession = vi.fn();
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
@@ -147,15 +177,16 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
   });
 
   it('allows a new Checkout for a past_due/canceled/incomplete business — recovery, not a duplicate', async () => {
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(
-        chainable({ data: { status: 'past_due', stripe_customer_id: 'cus_1' } })
-      );
-    mockVerifiedBusiness(from);
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: { status: 'past_due', stripe_customer_id: 'cus_1', trial_used_at: '2026-01-01' }
+      })
+    );
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createSession = vi
       .fn()
-      .mockResolvedValue({ url: 'https://checkout.stripe.com/session_abc' });
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/session_abc' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     const result = await startCheckout('biz-1');
@@ -165,26 +196,37 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
   });
 
   it('reuses an existing Stripe customer id instead of letting Stripe create a new one', async () => {
-    const from = vi
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: {
+          status: 'canceled',
+          stripe_customer_id: 'cus_existing',
+          trial_used_at: '2026-01-01'
+        }
+      })
+    );
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
       .fn()
-      .mockReturnValueOnce(
-        chainable({ data: { status: 'canceled', stripe_customer_id: 'cus_existing' } })
-      );
-    mockVerifiedBusiness(from);
-    const createSession = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/x' });
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     await startCheckout('biz-1');
 
     expect(createSession).toHaveBeenCalledWith(
-      expect.objectContaining({ customer: 'cus_existing' })
+      expect.objectContaining({ customer: 'cus_existing' }),
+      expect.objectContaining({ idempotencyKey: 'attempt-1' })
     );
   });
 
   it('omits the customer field entirely for a business with no Stripe customer yet — Stripe creates one', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from);
-    const createSession = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/x' });
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     await startCheckout('biz-1');
@@ -194,11 +236,159 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
   });
 });
 
-describe('startCheckout — session configuration', () => {
-  it('creates a subscription-mode session with a 14-day trial and the configured price', async () => {
+describe('startCheckout — durable Checkout concurrency', () => {
+  it('creates the Stripe Checkout Session using the claimed attempt id as the idempotency key', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from);
-    const createSession = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/x' });
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({ kind: 'new', attemptId: 'attempt-xyz' });
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    await startCheckout('biz-1');
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ idempotencyKey: 'attempt-xyz' })
+    );
+    expect(recordCheckoutSession).toHaveBeenCalledWith(expect.anything(), 'attempt-xyz', 'cs_1');
+  });
+
+  it('reuses a concurrently-created Checkout Session instead of ever calling Stripe again', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({
+      kind: 'reuse',
+      url: 'https://checkout.stripe.com/reused'
+    });
+    const createSession = vi.fn();
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'ok', url: 'https://checkout.stripe.com/reused' });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('reports a generic, retryable error instead of racing a second session when the claim says retry', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({ kind: 'retry' });
+    const createSession = vi.fn();
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result.status).toBe('error');
+    expect(createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('startCheckout — one free trial per business', () => {
+  it('grants the 14-day trial on a business’s first-ever Checkout', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    await startCheckout('biz-1');
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscription_data: expect.objectContaining({ trial_period_days: 14 })
+      }),
+      expect.anything()
+    );
+  });
+
+  it('never grants a second trial on a canceled-then-resubscribing business', async () => {
+    const from = vi.fn().mockReturnValueOnce(
+      chainable({
+        data: {
+          status: 'canceled',
+          stripe_customer_id: 'cus_1',
+          trial_used_at: '2026-01-01T00:00:00Z'
+        }
+      })
+    );
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    await startCheckout('biz-1');
+
+    const callArgs = createSession.mock.calls[0][0];
+    expect(callArgs.subscription_data.trial_period_days).toBeUndefined();
+  });
+
+  it('never grants a trial to a business whose only prior Checkout was abandoned (trial_used_at only set by the webhook, never by startCheckout itself)', async () => {
+    // An abandoned Checkout means the webhook never fired, so
+    // trial_used_at is still null on file — this business remains
+    // trial-eligible, and startCheckout() itself never writes
+    // trial_used_at anywhere (only the webhook's sync does).
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    await startCheckout('biz-1');
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.objectContaining({
+        subscription_data: expect.objectContaining({ trial_period_days: 14 })
+      }),
+      expect.anything()
+    );
+    // startCheckout() itself never touches business_subscriptions.trial_used_at.
+    expect(from).not.toHaveBeenCalledWith('business_subscriptions', expect.anything());
+  });
+
+  it('never creates two trials for two concurrent Checkout attempts on the same business', async () => {
+    const from = vi.fn().mockReturnValue(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    // First call wins the claim and creates the (trial) session.
+    claimCheckoutAttempt.mockResolvedValueOnce({ kind: 'new', attemptId: 'attempt-1' });
+    await startCheckout('biz-1');
+
+    // A concurrent/retried call reuses that same session instead of
+    // creating a second one (and therefore a second trial).
+    claimCheckoutAttempt.mockResolvedValueOnce({
+      kind: 'reuse',
+      url: 'https://checkout.stripe.com/x'
+    });
+    await startCheckout('biz-1');
+
+    expect(createSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('startCheckout — session configuration', () => {
+  it('creates a subscription-mode session with the configured price', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     await startCheckout('biz-1');
@@ -206,16 +396,19 @@ describe('startCheckout — session configuration', () => {
     expect(createSession).toHaveBeenCalledWith(
       expect.objectContaining({
         mode: 'subscription',
-        line_items: [{ price: 'price_123', quantity: 1 }],
-        subscription_data: expect.objectContaining({ trial_period_days: 14 })
-      })
+        line_items: [{ price: 'price_123', quantity: 1 }]
+      }),
+      expect.anything()
     );
   });
 
   it('attaches the verified business id as trusted metadata on both the session and the subscription — never anything the browser supplied', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from, 'biz-verified');
-    const createSession = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/x' });
+    mockVerifiedBusiness('biz-verified');
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     await startCheckout('biz-verified');
@@ -227,8 +420,11 @@ describe('startCheckout — session configuration', () => {
 
   it('builds success/cancel URLs from NEXT_PUBLIC_SITE_URL only — never a request Host header (this function never even receives a Request)', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from);
-    const createSession = vi.fn().mockResolvedValue({ url: 'https://checkout.stripe.com/x' });
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     await startCheckout('biz-1');
@@ -241,7 +437,8 @@ describe('startCheckout — session configuration', () => {
 
   it('reports a generic error, not a thrown exception, when Stripe itself fails', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createSession = vi.fn().mockRejectedValue(new Error('stripe down'));
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
@@ -277,9 +474,18 @@ describe('openCustomerPortal — authorization', () => {
 
 describe('openCustomerPortal — behavior', () => {
   it('returns not_configured when Stripe is not configured', async () => {
-    const from = vi.fn();
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
     getStripeClient.mockReturnValue(null);
+
+    const result = await openCustomerPortal('biz-1');
+
+    expect(result).toEqual({ status: 'not_configured' });
+  });
+
+  it('returns not_configured when the service-role client is unavailable', async () => {
+    mockVerifiedBusiness();
+    getStripeClient.mockReturnValue({ billingPortal: { sessions: { create: vi.fn() } } });
+    createSupabaseServiceRoleClient.mockReturnValue(null);
 
     const result = await openCustomerPortal('biz-1');
 
@@ -288,7 +494,8 @@ describe('openCustomerPortal — behavior', () => {
 
   it('returns no_customer when the business has never had a Stripe customer', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createPortalSession = vi.fn();
     getStripeClient.mockReturnValue({
       billingPortal: { sessions: { create: createPortalSession } }
@@ -300,11 +507,12 @@ describe('openCustomerPortal — behavior', () => {
     expect(createPortalSession).not.toHaveBeenCalled();
   });
 
-  it('creates a portal session for this business’s own customer id and a safe return URL', async () => {
+  it('creates a portal session for this business’s own customer id and a safe return URL, read via the service-role client', async () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: { stripe_customer_id: 'cus_own' } }));
-    mockVerifiedBusiness(from);
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
     const createPortalSession = vi
       .fn()
       .mockResolvedValue({ url: 'https://billing.stripe.com/session_xyz' });
@@ -319,6 +527,7 @@ describe('openCustomerPortal — behavior', () => {
       customer: 'cus_own',
       return_url: `${TEST_SITE_URL}/dashboard/billing`
     });
+    expect(from).toHaveBeenCalledWith('business_subscriptions');
   });
 });
 
@@ -334,7 +543,10 @@ describe('fetchBillingStatus', () => {
 
   it('returns not_configured without querying business_subscriptions when Stripe is not configured', async () => {
     const from = vi.fn();
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     isStripeConfigured.mockReturnValue(false);
 
     const result = await fetchBillingStatus('biz-1');
@@ -345,7 +557,10 @@ describe('fetchBillingStatus', () => {
 
   it('returns subscription: null for a business that has never subscribed — not an error', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null, error: null }));
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     getStripeClient.mockReturnValue(null);
 
     const result = await fetchBillingStatus('biz-1');
@@ -353,7 +568,24 @@ describe('fetchBillingStatus', () => {
     expect(result).toEqual({ status: 'ok', plan: null, subscription: null });
   });
 
-  it('maps an existing subscription row without ever including the raw Stripe customer/subscription id', async () => {
+  it('reads only the authenticated-safe columns — never stripe_customer_id or stripe_subscription_id', async () => {
+    const select = vi.fn().mockReturnValue(chainable({ data: null, error: null }));
+    const from = vi.fn().mockReturnValue({ select });
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
+    getStripeClient.mockReturnValue(null);
+
+    await fetchBillingStatus('biz-1');
+
+    const selectArg = select.mock.calls[0]?.[0] as string;
+    expect(selectArg).not.toMatch(/stripe_customer_id/);
+    expect(selectArg).not.toMatch(/stripe_subscription_id/);
+    expect(selectArg).toContain('has_stripe_customer');
+  });
+
+  it('maps an existing subscription row using has_stripe_customer, without ever selecting the raw Stripe customer/subscription id', async () => {
     const row = {
       status: 'trialing',
       trial_start: '2026-01-01T00:00:00Z',
@@ -361,10 +593,13 @@ describe('fetchBillingStatus', () => {
       current_period_start: '2026-01-01T00:00:00Z',
       current_period_end: '2026-02-01T00:00:00Z',
       cancel_at_period_end: false,
-      stripe_customer_id: 'cus_secret_value'
+      has_stripe_customer: true
     };
     const from = vi.fn().mockReturnValueOnce(chainable({ data: row, error: null }));
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     getStripeClient.mockReturnValue(null);
 
     const result = await fetchBillingStatus('biz-1');
@@ -378,13 +613,16 @@ describe('fetchBillingStatus', () => {
         cancelAtPeriodEnd: false,
         hasStripeCustomer: true
       });
-      expect(JSON.stringify(result.subscription)).not.toContain('cus_secret_value');
+      expect(JSON.stringify(result.subscription)).not.toContain('cus_');
     }
   });
 
   it('fetches the live plan price/currency from Stripe rather than any hardcoded value', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null, error: null }));
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     const retrievePrice = vi.fn().mockResolvedValue({
       unit_amount: 2900,
       currency: 'usd',
@@ -405,7 +643,10 @@ describe('fetchBillingStatus', () => {
 
   it('degrades gracefully to plan: null instead of failing the whole page when the Stripe price fetch fails', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null, error: null }));
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     const retrievePrice = vi.fn().mockRejectedValue(new Error('stripe unavailable'));
     getStripeClient.mockReturnValue({ prices: { retrieve: retrievePrice } });
 
@@ -418,7 +659,10 @@ describe('fetchBillingStatus', () => {
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: null, error: { message: 'db down' } }));
-    mockVerifiedBusiness(from);
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: true,
+      ctx: { supabase: { from } as unknown as SupabaseClient, user: stubUser, businessId: 'biz-1' }
+    });
     getStripeClient.mockReturnValue(null);
 
     await expect(fetchBillingStatus('biz-1')).rejects.toThrow('Something went wrong');

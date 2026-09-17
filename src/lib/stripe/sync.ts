@@ -2,6 +2,8 @@ import type Stripe from 'stripe';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { BusinessSubscriptionStatus } from '@/lib/supabase/database.types';
 
+const SYNC_RPC = 'sync_business_subscription';
+
 /**
  * The single place a live Stripe Subscription object becomes a
  * `business_subscriptions` row. Called from the webhook handler
@@ -9,10 +11,16 @@ import type { BusinessSubscriptionStatus } from '@/lib/supabase/database.types';
  * event — always with a freshly re-fetched Subscription object, never
  * with a webhook payload's own (possibly stale, possibly out-of-order)
  * `data.object` fields. Applying the same current snapshot twice (a
- * duplicate delivery) or in reverse chronological order (an
- * out-of-order delivery) always converges on the same, correct row,
- * because this always writes "the truth as of right now" rather than
- * "whatever this one event claimed".
+ * duplicate delivery) always converges on the same, correct row.
+ *
+ * Out-of-order delivery — a delayed webhook from an OLDER subscription
+ * a business has since canceled and replaced — is handled by the
+ * `sync_business_subscription` Postgres function (see the migration),
+ * not here: this function always calls that one atomic
+ * `insert ... on conflict ... do update ... where <ordering guard>`
+ * statement rather than a non-atomic "read the current row in JS, then
+ * decide whether to write." Passing `subscription.created` on every
+ * call is what makes that guard possible.
  *
  * `subscription.metadata.business_id` is trusted because this app
  * itself is the only party that ever sets it (at Checkout Session
@@ -44,23 +52,20 @@ export async function syncSubscriptionFromStripe(
   const item = subscription.items.data[0];
   const priceId = item?.price?.id ?? null;
 
-  const { error } = await supabase.from('business_subscriptions').upsert(
-    {
-      business_id: businessId,
-      stripe_customer_id: customerId,
-      stripe_subscription_id: subscription.id,
-      stripe_price_id: priceId,
-      status: subscription.status as BusinessSubscriptionStatus,
-      trial_start: unixToIso(subscription.trial_start),
-      trial_end: unixToIso(subscription.trial_end),
-      current_period_start: unixToIso(item?.current_period_start ?? null),
-      current_period_end: unixToIso(item?.current_period_end ?? null),
-      cancel_at_period_end: subscription.cancel_at_period_end,
-      canceled_at: unixToIso(subscription.canceled_at),
-      updated_at: new Date().toISOString()
-    },
-    { onConflict: 'business_id' }
-  );
+  const { error } = await supabase.rpc(SYNC_RPC, {
+    p_business_id: businessId,
+    p_stripe_customer_id: customerId,
+    p_stripe_subscription_id: subscription.id,
+    p_stripe_subscription_created_at: unixToIso(subscription.created),
+    p_stripe_price_id: priceId,
+    p_status: subscription.status as BusinessSubscriptionStatus,
+    p_trial_start: unixToIso(subscription.trial_start),
+    p_trial_end: unixToIso(subscription.trial_end),
+    p_current_period_start: unixToIso(item?.current_period_start ?? null),
+    p_current_period_end: unixToIso(item?.current_period_end ?? null),
+    p_cancel_at_period_end: subscription.cancel_at_period_end,
+    p_canceled_at: unixToIso(subscription.canceled_at)
+  });
 
   if (error) return { ok: false, reason: error.code ?? 'db_error' };
   return { ok: true };

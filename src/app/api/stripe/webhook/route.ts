@@ -62,11 +62,24 @@ export async function POST(request: Request) {
   // already has a row here — Stripe retries any non-2xx response, and
   // can also simply redeliver, so this is expected and safe to
   // short-circuit without redoing any work or any Stripe API call.
-  const { data: existingEvent } = await supabase
+  //
+  // Fail closed on the lookup itself: if we can't determine whether
+  // this event was already processed, we must not guess. Returning 500
+  // costs nothing (subscription synchronization is idempotent, so a
+  // Stripe retry that turns out to be a genuine re-delivery is always
+  // safe to reprocess) but silently proceeding as "not a duplicate"
+  // could double up externally-visible side effects in a future event
+  // handler.
+  const { data: existingEvent, error: lookupError } = await supabase
     .from('stripe_webhook_events')
     .select('stripe_event_id')
     .eq('stripe_event_id', event.id)
     .maybeSingle();
+
+  if (lookupError) {
+    console.error('[stripe-webhook] ledger lookup failed', { eventId: event.id });
+    return new Response('Ledger lookup failed.', { status: 500 });
+  }
 
   if (existingEvent) {
     return new Response(null, { status: 200 });
@@ -93,12 +106,22 @@ export async function POST(request: Request) {
     .from('stripe_webhook_events')
     .insert({ stripe_event_id: event.id, event_type: event.type });
 
-  // A concurrent delivery of the same event that also just finished
-  // processing (both upserts are idempotent, so both produced the same
-  // correct result) loses the ledger-insert race here — that's fine,
-  // not a real conflict.
-  if (ledgerError && ledgerError.code !== UNIQUE_VIOLATION) {
+  if (ledgerError) {
+    // A concurrent delivery of the same event that also just finished
+    // processing (both syncs are idempotent, so both produced the same
+    // correct result) loses the ledger-insert race here — that one
+    // specific error is not a real failure, so it's still safe to
+    // acknowledge.
+    if (ledgerError.code === UNIQUE_VIOLATION) {
+      return new Response(null, { status: 200 });
+    }
+
+    // Any other ledger-write failure fails closed: processing already
+    // succeeded, but we could not durably record that fact, so this
+    // response must not claim success. Stripe will retry; processing is
+    // idempotent, so replaying it is always safe.
     console.error('[stripe-webhook] ledger insert failed', { eventId: event.id });
+    return new Response('Ledger write failed.', { status: 500 });
   }
 
   return new Response(null, { status: 200 });
@@ -111,7 +134,20 @@ async function processEvent(
 ): Promise<void> {
   switch (event.type) {
     case 'checkout.session.completed': {
-      const subscriptionId = idOf(event.data.object.subscription);
+      const session = event.data.object;
+      const subscriptionId = idOf(session.subscription);
+
+      // This app only ever creates subscription-mode Checkout Sessions
+      // (see startCheckout() in src/features/billing/api/service.ts). A
+      // "completed" subscription-mode session with no subscription id
+      // attached is not a state this billing feature can safely
+      // acknowledge as handled — it must fail so Stripe retries, never
+      // be silently accepted (which would record the event as
+      // processed with nothing actually synchronized).
+      if (session.mode === 'subscription' && !subscriptionId) {
+        throw new Error('checkout_session_missing_subscription');
+      }
+
       if (subscriptionId) {
         await syncOrThrow(supabase, stripe, subscriptionId);
       }
@@ -129,7 +165,10 @@ async function processEvent(
     case 'invoice.payment_failed': {
       const subscriptionId = idOf(event.data.object.parent?.subscription_details?.subscription);
       // Not every invoice belongs to a subscription (e.g. a one-off
-      // invoice item) — nothing to synchronize for those.
+      // invoice item) — nothing to synchronize for those, and that is a
+      // legitimate, successfully-acknowledged no-op (unlike a
+      // subscription-mode checkout.session.completed missing its
+      // subscription, which is never legitimate for this app).
       if (subscriptionId) {
         await syncOrThrow(supabase, stripe, subscriptionId);
       }
@@ -148,8 +187,10 @@ async function processEvent(
 /**
  * `syncSubscriptionFromStripe()` always re-fetches the live Subscription
  * object rather than trusting this event's own payload fields — the
- * one thing that makes duplicate and out-of-order delivery safe (see
- * that function's own doc comment in src/lib/stripe/sync.ts).
+ * one thing that makes duplicate delivery safe (see that function's own
+ * doc comment in src/lib/stripe/sync.ts). Out-of-order delivery safety
+ * comes from the `sync_business_subscription` Postgres function's own
+ * atomic ordering guard, not from anything here.
  */
 async function syncOrThrow(
   supabase: SupabaseClient,
