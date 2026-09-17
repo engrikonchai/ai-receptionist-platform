@@ -82,24 +82,61 @@ export async function checkRateLimit(
   request: Request
 ): Promise<RateLimitOutcome> {
   const bucketKey = buildBucketKey(route, publicWidgetId, clientIpFrom(request));
-  if (!bucketKey) return { status: 'unavailable' };
+  if (!bucketKey) {
+    console.error(
+      '[public-widget] rate limit unavailable: RATE_LIMIT_HASH_SECRET is not configured'
+    );
+    return { status: 'unavailable' };
+  }
 
-  const supabase = createSupabaseServiceRoleClient();
-  if (!supabase) return { status: 'unavailable' };
+  // `createSupabaseServiceRoleClient()` and the RPC call below are
+  // expected to report failure through a returned `{ error }` value,
+  // never by throwing — but a malformed env var (e.g. a
+  // NEXT_PUBLIC_SUPABASE_URL that isn't a valid URL) makes the
+  // underlying client constructor throw synchronously, and a genuine
+  // network failure can reject the RPC call outright. Either would
+  // otherwise propagate as an uncaught exception out of this route,
+  // producing a bare framework 500 with none of the CORS headers a
+  // deliberate 503 response carries — which looks identical to a
+  // silent widget failure on the embedding site. This try/catch is
+  // what keeps "the limiter is unreachable" always resolving to the
+  // same deterministic, CORS-safe `unavailable` outcome documented
+  // above, regardless of which specific way it's unreachable.
+  try {
+    const supabase = createSupabaseServiceRoleClient();
+    if (!supabase) {
+      console.error(
+        '[public-widget] rate limit unavailable: service-role Supabase client could not be created (check NEXT_PUBLIC_SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY)'
+      );
+      return { status: 'unavailable' };
+    }
 
-  const { limit, windowSeconds } = RATE_LIMITS[route];
+    const { limit, windowSeconds } = RATE_LIMITS[route];
 
-  const { data, error } = await supabase
-    .rpc('check_and_increment_rate_limit', {
-      p_bucket_key: bucketKey,
-      p_limit: limit,
-      p_window_seconds: windowSeconds
-    })
-    .single();
+    const { data, error } = await supabase
+      .rpc('check_and_increment_rate_limit', {
+        p_bucket_key: bucketKey,
+        p_limit: limit,
+        p_window_seconds: windowSeconds
+      })
+      .single();
 
-  if (error || !data) return { status: 'unavailable' };
+    if (error || !data) {
+      console.error(
+        '[public-widget] rate limit unavailable: check_and_increment_rate_limit RPC failed',
+        error?.message ?? 'no data returned'
+      );
+      return { status: 'unavailable' };
+    }
 
-  const row = data as RateLimitRpcRow;
-  if (!row.allowed) return { status: 'limited', retryAfterSeconds: row.retry_after_seconds };
-  return { status: 'allowed' };
+    const row = data as RateLimitRpcRow;
+    if (!row.allowed) return { status: 'limited', retryAfterSeconds: row.retry_after_seconds };
+    return { status: 'allowed' };
+  } catch (caught) {
+    console.error(
+      '[public-widget] rate limit unavailable: unexpected exception',
+      caught instanceof Error ? caught.message : caught
+    );
+    return { status: 'unavailable' };
+  }
 }

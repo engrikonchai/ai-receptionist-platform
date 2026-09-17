@@ -28,16 +28,43 @@ export async function fetchWidgetPublicConfig(
   const normalizedOrigin = originHeader ? normalizeOrigin(originHeader) : null;
   if (!normalizedOrigin) return null;
 
-  const supabase = createSupabasePublicClient();
-  if (!supabase) return null;
+  // Same reasoning as checkRateLimit()'s try/catch (see
+  // src/lib/public-widget/rate-limit.ts): client construction and the
+  // RPC call are expected to fail via a returned `{ error }`, never by
+  // throwing, but a malformed env var or a genuine network failure can
+  // do exactly that. Left uncaught, that becomes an uncaught exception
+  // out of this route — a bare framework 500 with no CORS headers,
+  // instead of this function's documented "null for anything that
+  // isn't a real, allowed widget" contract turning into the route's
+  // normal `{ enabled: false }` 200 response.
+  try {
+    const supabase = createSupabasePublicClient();
+    if (!supabase) {
+      console.error(
+        '[public-widget] config lookup unavailable: public Supabase client could not be created (check NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY)'
+      );
+      return null;
+    }
 
-  const { data, error } = await supabase
-    .rpc('resolve_widget_config', {
-      p_widget_id: publicWidgetId,
-      p_origin: normalizedOrigin
-    })
-    .maybeSingle();
+    const { data, error } = await supabase
+      .rpc('resolve_widget_config', {
+        p_widget_id: publicWidgetId,
+        p_origin: normalizedOrigin
+      })
+      .maybeSingle();
 
-  if (error || !data) return null;
-  return data as WidgetPublicConfigRpcResult;
+    if (error || !data) {
+      if (error) {
+        console.error('[public-widget] resolve_widget_config RPC failed', error.message);
+      }
+      return null;
+    }
+    return data as WidgetPublicConfigRpcResult;
+  } catch (caught) {
+    console.error(
+      '[public-widget] config lookup unavailable: unexpected exception',
+      caught instanceof Error ? caught.message : caught
+    );
+    return null;
+  }
 }

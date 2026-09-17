@@ -89,6 +89,53 @@ describe('checkRateLimit', () => {
     expect(result).toEqual({ status: 'unavailable' });
   });
 
+  it('returns unavailable (fails closed) — never throws — when the service-role client constructor itself throws synchronously', async () => {
+    // E.g. a malformed NEXT_PUBLIC_SUPABASE_URL: @supabase/supabase-js's
+    // createClient() throws synchronously rather than returning
+    // `{ error }` for an invalid URL. Left uncaught, this would escape
+    // checkRateLimit() as an unhandled exception instead of the
+    // documented 'unavailable' outcome.
+    vi.mocked(createSupabaseServiceRoleClient).mockImplementation(() => {
+      throw new TypeError('Invalid URL');
+    });
+
+    const result = await checkRateLimit('config', 'widget-a', new Request('https://example.com'));
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
+  it('returns unavailable (fails closed) — never throws — when the RPC call itself rejects instead of resolving with { error }', async () => {
+    const rpc = vi.fn(() => ({
+      single: () => Promise.reject(new Error('fetch failed'))
+    }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue({
+      rpc
+    } as unknown as SupabaseClient);
+
+    const result = await checkRateLimit('config', 'widget-a', new Request('https://example.com'));
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
+  it('reproduces the exact production widget id/origin: fails closed to unavailable when the durable store errors', async () => {
+    const rpc = vi.fn(() => ({
+      single: () => Promise.resolve({ data: null, error: { message: 'db down' } })
+    }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue({
+      rpc
+    } as unknown as SupabaseClient);
+
+    const result = await checkRateLimit(
+      'config',
+      'e3f351d2-82cb-4882-b668-c68f1e008bc1',
+      new Request('https://ai-receptionist-platform-beta.vercel.app', {
+        headers: { origin: 'https://chatbot-demo-iota-two.vercel.app' }
+      })
+    );
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
   it('never sends a raw IP address to the durable store — only a hash', async () => {
     const store = createFakeDurableStore();
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockServiceRoleClient(store));
