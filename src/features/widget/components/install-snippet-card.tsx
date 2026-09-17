@@ -22,6 +22,22 @@ export function buildInstallSnippet(siteOrigin: string, publicWidgetId: string):
   return `<script src="${siteOrigin}/widget-loader.js" data-widget-id="${publicWidgetId}" async></script>`;
 }
 
+/**
+ * The documented public contract for opening the widget from a
+ * customer's own button (see the "Public 'open from your own button'
+ * contract" section in public/widget-loader.js) — never Shadow DOM
+ * access, never an internal class name, just this one event.
+ */
+export function buildOpenEventSnippet(publicWidgetId: string): string {
+  return `document.querySelector('#your-button').addEventListener('click', function () {
+  window.dispatchEvent(
+    new CustomEvent('ai-receptionist:open', {
+      detail: { widgetId: '${publicWidgetId}' }
+    })
+  );
+});`;
+}
+
 export function InstallSnippetCard({
   siteOrigin,
   publicWidgetId
@@ -96,6 +112,22 @@ export function InstallSnippetCard({
           The widget only responds on domains you&apos;ve allowed below — add your website&apos;s
           domain there first, or the chat button won&apos;t reply to visitors.
         </p>
+
+        <details className='group'>
+          <summary className='text-sm font-medium hover:cursor-pointer'>
+            Optional: open the widget from your own button
+          </summary>
+          <div className='mt-2 space-y-2'>
+            <p className='text-muted-foreground text-xs'>
+              Want a &quot;Chat with us&quot; button of your own, instead of (or alongside) the
+              floating launcher? Dispatch this event from its click handler — no need to find or
+              touch the widget&apos;s own elements.
+            </p>
+            <pre className='bg-muted max-w-full overflow-x-auto rounded-md p-3 text-xs'>
+              <code>{buildOpenEventSnippet(publicWidgetId)}</code>
+            </pre>
+          </div>
+        </details>
       </CardContent>
     </Card>
   );

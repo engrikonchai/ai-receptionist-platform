@@ -18,6 +18,34 @@
  * an opaque `sessionToken` this script stores and replays verbatim
  * (see src/lib/public-widget/session-token.ts) — it never receives or
  * needs any actual secret key.
+ *
+ * Public "open from your own button" contract
+ * --------------------------------------------
+ * A customer's own page can open the widget from any button of their
+ * own — a "Chat with us" CTA, a nav link, anything — without ever
+ * touching this widget's Shadow DOM or internal markup, by dispatching:
+ *
+ *   window.dispatchEvent(
+ *     new CustomEvent('ai-receptionist:open', {
+ *       detail: { widgetId: '<the same public widget id from the snippet above>' }
+ *     })
+ *   );
+ *
+ * This is the one supported way to open the widget programmatically —
+ * it is validated (the event must be a real CustomEvent, `detail` must
+ * be an object, and `detail.widgetId` must be a string that exactly
+ * matches this script's own `data-widget-id`) and is otherwise ignored,
+ * silently and without error. The listener is registered synchronously,
+ * before this script's own async config/session setup begins, so an
+ * event fired immediately on page load is never missed: if it arrives
+ * before initialization finishes, exactly one pending open is
+ * remembered and applied right after initialization succeeds. If
+ * initialization never succeeds — config fetch failure, this page's
+ * origin isn't on the widget's allowed list, or the widget is turned
+ * off — no pending or future open event can bypass that; nothing is
+ * ever shown. Opening is idempotent: dispatching the event while the
+ * widget is already open is a no-op, and it works again normally after
+ * the widget is closed.
  */
 (function () {
   'use strict';
@@ -109,6 +137,48 @@
     return div.innerHTML;
   }
 
+  var OPEN_EVENT_NAME = 'ai-receptionist:open';
+
+  // Set once mountWidget() has finished wiring everything up — null
+  // until then, and forever null if initialization never succeeds.
+  // Calling it is the one and only way (besides clicking the launcher
+  // itself) to open the widget; nothing about it is reachable from
+  // outside this closure.
+  var openWidgetFn = null;
+  var pendingOpenRequested = false;
+
+  function isValidOpenEvent(event) {
+    return (
+      !!event &&
+      event instanceof CustomEvent &&
+      !!event.detail &&
+      typeof event.detail === 'object' &&
+      typeof event.detail.widgetId === 'string' &&
+      event.detail.widgetId === widgetId
+    );
+  }
+
+  function handleOpenEvent(event) {
+    // A missing, malformed, or different widgetId is silently ignored —
+    // never an error, never a partial open.
+    if (!isValidOpenEvent(event)) return;
+    if (openWidgetFn) {
+      openWidgetFn();
+    } else {
+      // Still initializing: remember exactly one pending open request.
+      // Coalescing multiple events into a single boolean is correct
+      // because opening is idempotent — there's nothing more for a
+      // second pending request to do than a first.
+      pendingOpenRequested = true;
+    }
+  }
+
+  // Registered synchronously, before the async config fetch below even
+  // starts, so an event dispatched immediately on page load — before
+  // this script's own initialization has had a chance to run — is
+  // never missed.
+  window.addEventListener(OPEN_EVENT_NAME, handleOpenEvent);
+
   fetch(API_ORIGIN + '/api/public-widget/config?widgetId=' + encodeURIComponent(widgetId))
     .then(function (response) {
       return response.ok ? response.json() : null;
@@ -117,10 +187,19 @@
       return null;
     })
     .then(function (config) {
-      // No config, or the owner has this widget turned off — never show
-      // anything to a real visitor, and never surface why.
-      if (!config || !config.enabled) return;
+      // No config, the owner has this widget turned off, this page's
+      // origin isn't allowed, or the request failed outright — never
+      // show anything to a real visitor, never surface why, and never
+      // let a pending open request bypass any of that.
+      if (!config || !config.enabled) {
+        pendingOpenRequested = false;
+        return;
+      }
       mountWidget(config);
+      if (pendingOpenRequested) {
+        pendingOpenRequested = false;
+        openWidgetFn();
+      }
     });
 
   function mountWidget(config) {
@@ -270,20 +349,35 @@
         });
     }
 
-    launcher.addEventListener('click', function () {
+    var isOpen = false;
+
+    // The single internal entry point for opening the widget — used by
+    // the launcher's own click handler and by a valid
+    // 'ai-receptionist:open' event alike, so there is exactly one place
+    // that decides what "open" means.
+    function openWidget() {
+      if (isOpen) return; // idempotent — opening while already open is a no-op
+      isOpen = true;
       panel.classList.add('open');
       launcher.style.display = 'none';
       ensureSession().then(function () {
         input.focus();
       });
-    });
-    closeButton.addEventListener('click', function () {
+    }
+
+    function closeWidget() {
+      isOpen = false;
       panel.classList.remove('open');
       launcher.style.display = 'flex';
-    });
+    }
+
+    launcher.addEventListener('click', openWidget);
+    closeButton.addEventListener('click', closeWidget);
     sendButton.addEventListener('click', sendMessage);
     input.addEventListener('keydown', function (event) {
       if (event.key === 'Enter') sendMessage();
     });
+
+    openWidgetFn = openWidget;
   }
 })();
