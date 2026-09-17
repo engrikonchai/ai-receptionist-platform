@@ -277,8 +277,8 @@
       'width:100%;border:1px solid #ddd;border-radius:10px;padding:10px 12px;font-size:16px;outline:none;' +
       'min-height:44px;font-family:inherit;background:#fff;color:#111}' +
       '.handoff-form textarea{min-height:72px;resize:vertical}' +
-      '.handoff-form .consent{display:flex;align-items:flex-start;gap:8px;font-size:12px;font-weight:400;color:#444}' +
-      '.handoff-form .consent input{width:18px;height:18px;flex-shrink:0;margin-top:2px}' +
+      '.handoff-form .consent{display:flex;align-items:center;gap:8px;min-height:44px;font-size:12px;font-weight:400;color:#444}' +
+      '.handoff-form .consent input{width:18px;height:18px;flex-shrink:0}' +
       '.handoff-form .error{color:#d33;font-size:12px;min-height:16px;margin:0}' +
       '.handoff-form .actions{display:flex;gap:8px;margin-top:4px;padding-bottom:env(safe-area-inset-bottom)}' +
       '.handoff-form .actions button{min-height:44px;border-radius:9999px;border:none;cursor:pointer;font-size:13px;font-weight:600}' +

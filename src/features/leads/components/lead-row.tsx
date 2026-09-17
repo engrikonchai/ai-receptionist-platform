@@ -53,7 +53,7 @@ export function LeadRow({
             <span className='text-muted-foreground text-[0.7rem]'>
               {LEAD_SOURCE_LABEL[lead.source]}
             </span>
-            <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+            <div className='flex min-w-0 flex-wrap items-center justify-end gap-1.5'>
               {lead.handoffStatus && (
                 <LeadHandoffBadge status={lead.handoffStatus} humanTakeover={lead.humanTakeover} />
               )}

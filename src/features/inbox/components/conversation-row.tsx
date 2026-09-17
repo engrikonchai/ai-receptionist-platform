@@ -72,7 +72,7 @@ export function ConversationRow({
               <ChannelIcon channel={conversation.channel} />
               <span className='truncate'>{languageLabel(conversation.detectedLanguage)}</span>
             </div>
-            <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
+            <div className='flex min-w-0 flex-wrap items-center justify-end gap-1.5'>
               {conversation.handoffStatus && (
                 <HandoffStatusIndicator
                   status={conversation.handoffStatus}
