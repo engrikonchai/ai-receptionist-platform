@@ -57,6 +57,7 @@
     "recharts": "3.8.0",
     "sharp": "^0.35.3",
     "sonner": "^1.7.4",
+    "stripe": "^22.6.2",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
     "tailwindcss-animate": "^1.0.7",

@@ -16,8 +16,11 @@
  * (supabase/migrations/20260916120000_widget_allowed_origins.sql), and
  * `widget_settings.installation_confirmed` / `installation_confirmed_at`
  * (supabase/migrations/20260917140000_widget_installation_confirmed.sql
- * — confirmed applied), and `handoffs.client_request_id`
+ * — confirmed applied), `handoffs.client_request_id`
  * (supabase/migrations/20260918090000_handoff_idempotency.sql — NOT
+ * applied yet), and the two brand-new tables
+ * `business_subscriptions` / `stripe_webhook_events`
+ * (supabase/migrations/20260919090000_business_subscriptions.sql — NOT
  * applied yet) — see each file's header for why it's safe.
  *
  * These are deliberately used as plain result-shape types (cast at the
@@ -192,4 +195,60 @@ export interface WidgetPublicConfigRpcResult {
   human_handoff_enabled: boolean;
   default_language: string;
   supported_languages: string[];
+}
+
+/**
+ * Mirrors Stripe's own subscription status values verbatim (see
+ * https://stripe.com/docs/api/subscriptions/object#subscription_object-status)
+ * rather than a parallel vocabulary — the webhook handler
+ * (src/app/api/stripe/webhook/route.ts) never has to translate.
+ */
+export type BusinessSubscriptionStatus =
+  | 'incomplete'
+  | 'incomplete_expired'
+  | 'trialing'
+  | 'active'
+  | 'past_due'
+  | 'canceled'
+  | 'unpaid'
+  | 'paused';
+
+/**
+ * One row per business's Stripe subscription lifecycle — see
+ * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * applied yet). Written only by the service-role key, from the
+ * verified Stripe webhook handler and the checkout/portal server
+ * actions' own customer-id backfill (src/features/billing/api/service.ts)
+ * — never directly by a dashboard request. Row is never deleted on
+ * cancellation.
+ */
+export interface BusinessSubscriptionRow {
+  id: string;
+  business_id: string;
+  stripe_customer_id: string | null;
+  stripe_subscription_id: string | null;
+  stripe_price_id: string | null;
+  status: BusinessSubscriptionStatus;
+  trial_start: string | null;
+  trial_end: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  canceled_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/**
+ * Idempotency ledger for the Stripe webhook handler — one row per
+ * successfully processed Stripe event id. See
+ * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * applied yet). Read and written only by the service-role key.
+ */
+export interface StripeWebhookEventRow {
+  stripe_event_id: string;
+  event_type: string;
+  processed_at: string;
+  attempt_count: number;
+  last_error: string | null;
 }
