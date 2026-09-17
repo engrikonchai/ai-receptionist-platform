@@ -163,6 +163,16 @@ describe('WidgetSettingsForm — allowed website origins', () => {
 
     expect(await screen.findByRole('button', { name: 'Remove new-site.com' })).toBeInTheDocument();
   });
+
+  it('removes a domain badge when its remove button is clicked, even at the enlarged mobile tap target', async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    expect(screen.getByRole('button', { name: 'Remove example.com' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Remove example.com' }));
+
+    expect(screen.queryByRole('button', { name: 'Remove example.com' })).not.toBeInTheDocument();
+  });
 });
 
 describe('WidgetSettingsForm — human handoff', () => {

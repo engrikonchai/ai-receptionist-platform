@@ -82,7 +82,7 @@ export function Composer({
 
   if (!canSend) {
     return (
-      <div className='bg-card sticky bottom-0 border-t p-3'>
+      <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
         <div
           role='status'
           className='bg-muted/50 text-muted-foreground flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs'
@@ -102,7 +102,7 @@ export function Composer({
         : null;
 
   return (
-    <div className='bg-card sticky bottom-0 border-t p-3'>
+    <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
       {sendError && (
         <p role='alert' className='text-destructive mb-2 text-xs'>
           {sendError}
@@ -159,6 +159,7 @@ export function Composer({
             size='icon'
             disabled={!isValid || isSending}
             aria-label='Send message'
+            className='size-11 md:size-8'
           >
             {isSending ? (
               <Spinner className='size-4' />

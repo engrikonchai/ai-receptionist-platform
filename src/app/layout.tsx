@@ -26,7 +26,22 @@ export const metadata: Metadata = {
   description: 'Platform — AI receptionist dashboard.'
 };
 
+// Exporting a custom `viewport` object replaces Next's own default meta
+// tag entirely rather than merging into it — omitting `width`/
+// `initialScale` here (as this previously did, setting only
+// `themeColor`) left mobile Safari with no viewport meta tag at all,
+// so it fell back to rendering the page at its desktop-compatibility
+// width (~980px) and scaling the whole result down to fit the screen.
+// That's what made every page look like "a compressed desktop page" on
+// a phone even though the layout itself is responsive — not a CSS
+// problem, a missing meta tag. `viewportFit: 'cover'` is what makes
+// `env(safe-area-inset-*)` resolve to real values (notch/home-indicator
+// insets) on iOS Safari instead of 0; without it every safe-area rule
+// in this app would be a no-op.
 export const viewport: Viewport = {
+  width: 'device-width',
+  initialScale: 1,
+  viewportFit: 'cover',
   themeColor: META_THEME_COLORS.light
 };
 

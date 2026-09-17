@@ -15,6 +15,12 @@
   * {
     @apply border-border outline-ring/50;
   }
+  html {
+    /* Defense in depth alongside body's own overflow-x-hidden below —
+       a stray fixed-width descendant should never be able to open up
+       page-level horizontal scroll on mobile. */
+    overflow-x: hidden;
+  }
   body {
     @apply bg-background text-foreground;
   }

@@ -97,7 +97,7 @@ export function WidgetSettingsForm({
         e.preventDefault();
         form.handleSubmit();
       }}
-      className='grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]'
+      className='grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]'
     >
       <div className='space-y-6'>
         <Card>
@@ -298,9 +298,11 @@ export function WidgetSettingsForm({
           </p>
         )}
 
-        <div className='flex justify-end'>
+        <div className='flex justify-end pb-[env(safe-area-inset-bottom)]'>
           <form.AppForm>
-            <form.SubmitButton>Save changes</form.SubmitButton>
+            <form.SubmitButton className='h-11 w-full sm:h-8 sm:w-auto'>
+              Save changes
+            </form.SubmitButton>
           </form.AppForm>
         </div>
       </div>
