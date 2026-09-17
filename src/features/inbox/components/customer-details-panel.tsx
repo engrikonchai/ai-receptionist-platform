@@ -13,8 +13,8 @@ import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
 import {
   CHANNEL_LABEL,
-  HANDOFF_STATUS_LABEL,
   LEAD_STATUS_LABEL,
+  handoffStatusIndicatorLabel,
   languageLabel
 } from '../utils/format';
 import { conversationHandoffOptions, conversationLeadOptions } from '../api/queries';
@@ -112,10 +112,12 @@ function LeadSection({
 
 function HandoffSection({
   businessId,
-  conversationId
+  conversationId,
+  humanTakeover
 }: {
   businessId: string;
   conversationId: string;
+  humanTakeover: boolean;
 }) {
   const { data, isPending, isError, refetch } = useQuery(
     conversationHandoffOptions(businessId, conversationId)
@@ -132,13 +134,15 @@ function HandoffSection({
   }
 
   const { handoff } = data;
+  const isSettled =
+    handoff.status === 'resolved' || (handoff.status === 'contacted' && !humanTakeover);
 
   return (
     <div className='space-y-3'>
       <div className='flex items-center justify-between gap-2'>
         <p className='text-foreground text-sm font-medium'>Handoff</p>
-        <Badge variant={handoff.status === 'resolved' ? 'outline' : 'destructive'}>
-          {HANDOFF_STATUS_LABEL[handoff.status]}
+        <Badge variant={isSettled ? 'outline' : 'destructive'}>
+          {handoffStatusIndicatorLabel(handoff.status, humanTakeover)}
         </Badge>
       </div>
       <DetailRow
@@ -181,7 +185,11 @@ export function CustomerDetailsContent({
 
       <Separator />
 
-      <HandoffSection businessId={businessId} conversationId={conversation.id} />
+      <HandoffSection
+        businessId={businessId}
+        conversationId={conversation.id}
+        humanTakeover={conversation.humanTakeover}
+      />
 
       <Separator />
 

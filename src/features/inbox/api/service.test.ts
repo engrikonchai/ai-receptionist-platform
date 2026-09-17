@@ -556,6 +556,60 @@ describe('conversation actions (take over / return to AI / resolve / reopen)', (
 
     await expect(reopenConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
   });
+
+  it('taking over a conversation with a pending handoff request advances it to "contacted" — the "owner accepts" transition', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ data: { id: 'handoff-1', status: 'new' } })) // handoffs select
+      .mockReturnValueOnce(chainable({ error: null })); // handoffs update to 'contacted'
+    mockVerifiedBusiness(from);
+
+    await expect(takeOverConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+    expect(from).toHaveBeenCalledTimes(3);
+  });
+
+  it('taking over a conversation with no handoff request at all never touches the handoffs table beyond the lookup', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ data: null })); // handoffs select: none found
+    mockVerifiedBusiness(from);
+
+    await expect(takeOverConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+    expect(from).toHaveBeenCalledTimes(2);
+  });
+
+  it('taking over a conversation whose handoff is already resolved never reopens it', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ data: { id: 'handoff-1', status: 'resolved' } })); // already resolved
+    mockVerifiedBusiness(from);
+
+    await expect(takeOverConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+    expect(from).toHaveBeenCalledTimes(2); // no third call — the update to 'contacted' never happens
+  });
+
+  it('resolving a conversation with an active handoff marks it "resolved" — the "owner resolves" transition', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ data: { id: 'handoff-1', status: 'contacted' } })) // handoffs select
+      .mockReturnValueOnce(chainable({ error: null })); // handoffs update to 'resolved'
+    mockVerifiedBusiness(from);
+
+    await expect(resolveConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+    expect(from).toHaveBeenCalledTimes(3);
+  });
+
+  it('returning a conversation to automation never writes to the handoffs table — the Inbox derives that state from human_takeover alone', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: { id: 'conv-1' }, error: null }));
+    mockVerifiedBusiness(from);
+
+    await expect(returnToAIConversation('biz-1', 'conv-1')).resolves.toEqual({ success: true });
+    expect(from).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('sendHumanReply', () => {

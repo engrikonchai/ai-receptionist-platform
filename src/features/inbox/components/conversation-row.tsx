@@ -74,7 +74,10 @@ export function ConversationRow({
             </div>
             <div className='flex shrink-0 flex-wrap items-center justify-end gap-1.5'>
               {conversation.handoffStatus && (
-                <HandoffStatusIndicator status={conversation.handoffStatus} />
+                <HandoffStatusIndicator
+                  status={conversation.handoffStatus}
+                  humanTakeover={conversation.humanTakeover}
+                />
               )}
               <HumanTakeoverBadge humanTakeover={conversation.humanTakeover} />
               <ConversationStatusBadge status={conversation.status} />

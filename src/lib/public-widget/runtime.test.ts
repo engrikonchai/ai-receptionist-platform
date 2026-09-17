@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
 import { generateKnowledgeReply } from './knowledge-reply';
-import { postMessage, startOrContinueSession } from './runtime';
+import { postMessage, startOrContinueSession, submitHandoffRequest } from './runtime';
 import { issueWidgetSessionToken } from './session-token';
 
 vi.mock('@/lib/supabase/service-role', () => ({
@@ -61,6 +61,9 @@ const WIDGET_SETTINGS_B = {
   welcome_message_me: null,
   welcome_message_ru: null
 };
+
+const WIDGET_SETTINGS_A_HANDOFF_ENABLED = { ...WIDGET_SETTINGS_A, human_handoff_enabled: true };
+const WIDGET_SETTINGS_B_HANDOFF_ENABLED = { ...WIDGET_SETTINGS_B, human_handoff_enabled: true };
 
 /** Shared default claims (widget-a/conv-a-1/visitor-1 — no businessId; see session-token.ts) for the token-authorization test blocks below — override just the field under test. */
 function tokenFor(overrides: Partial<Parameters<typeof issueWidgetSessionToken>[0]> = {}) {
@@ -382,6 +385,7 @@ describe('postMessage — session-token authorization', () => {
         chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
       )
       .mockReturnValueOnce(chainable({ error: null })) // user message insert
+      .mockReturnValueOnce(chainable({ data: null })) // active-handoff check: none found
       .mockReturnValueOnce(chainable({ error: null })); // assistant message insert
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
 
@@ -587,8 +591,9 @@ describe('postMessage — session-token authorization', () => {
       .mockReturnValueOnce(
         chainable({ data: { id: 'conv-b-1', detected_language: 'en', human_takeover: false } })
       )
-      .mockReturnValueOnce(chainable({ error: null }))
-      .mockReturnValueOnce(chainable({ error: null }));
+      .mockReturnValueOnce(chainable({ error: null })) // user message insert
+      .mockReturnValueOnce(chainable({ data: null })) // active-handoff check: none found
+      .mockReturnValueOnce(chainable({ error: null })); // assistant message insert
     vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
 
     await postMessage({
@@ -610,5 +615,288 @@ describe('postMessage — session-token authorization', () => {
       'Any vacancies?',
       'en'
     );
+  });
+});
+
+describe('submitHandoffRequest — the visitor-facing "Talk to a person" submit handler', () => {
+  const validParams = {
+    publicWidgetId: 'widget-a',
+    visitorId: 'visitor-1',
+    conversationId: 'conv-a-1',
+    clientRequestId: 'client-request-1',
+    name: 'Jane Visitor',
+    email: 'jane@example.com',
+    message: 'Please call me back',
+    originHeader: 'https://a.example.com'
+  };
+
+  it('returns disabled, and never even attempts a session-token check, when human handoff is off for this widget', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A })); // human_handoff_enabled not set
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'disabled' });
+    expect(from).toHaveBeenCalledTimes(2);
+  });
+
+  it('rejects a wrong-origin request before ever checking the session token', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({
+      ...validParams,
+      sessionToken: tokenFor(),
+      originHeader: 'https://evil.example.com'
+    });
+
+    expect(result).toEqual({ status: 'origin_denied' });
+  });
+
+  it('rejects a token issued for a different widget (mismatched widget id)', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_B }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_B_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({
+      ...validParams,
+      publicWidgetId: 'widget-b',
+      originHeader: 'https://b.example.com',
+      sessionToken: tokenFor() // issued for widget-a
+    });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+    expect(from).toHaveBeenCalledTimes(2); // never reaches the conversations table
+  });
+
+  it('rejects an expired session token', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(0);
+    const expiredToken = tokenFor();
+    vi.setSystemTime((4 * 60 * 60 + 1) * 1000);
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: expiredToken });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('rejects a tampered session token', async () => {
+    const validToken = tokenFor();
+    const [payloadB64] = validToken.split('.');
+    const tamperedToken = `${payloadB64}.${'A'.repeat(43)}`;
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tamperedToken });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+  });
+
+  it('returns unavailable when WIDGET_SESSION_SECRET is not configured', async () => {
+    delete process.env.WIDGET_SESSION_SECRET;
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: 'anything' });
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
+  it('fails closed when the service-role client cannot be created for the write phase', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }));
+    vi.mocked(createSupabaseServiceRoleClient)
+      .mockReturnValueOnce(mockClient(from)) // resolveWidgetForRuntime's own client
+      .mockReturnValueOnce(null); // the write-phase client
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
+  it('rejects when the conversation id does not belong to this business + visitor', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(chainable({ data: null })); // conversations query finds nothing
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'unauthorized' });
+    expect(from).toHaveBeenCalledTimes(3);
+  });
+
+  it('creates a lead and a pending handoff, marks the conversation handed off, and sends one acknowledgement — for a first-time submission with no existing lead', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A })) // businesses
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED })) // widget_settings
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
+      ) // conversations (loadOwnConversation)
+      .mockReturnValueOnce(chainable({ data: null })) // handoffs select by client_request_id: none found
+      .mockReturnValueOnce(chainable({ data: null })) // leads select for this conversation: none found
+      .mockReturnValueOnce(chainable({ error: null })) // leads insert
+      .mockReturnValueOnce(chainable({ error: null })) // handoffs insert
+      .mockReturnValueOnce(chainable({ error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ error: null })); // messages insert (acknowledgement)
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(from.mock.calls.map((call) => call[0])).toEqual([
+      'businesses',
+      'widget_settings',
+      'conversations',
+      'handoffs',
+      'leads',
+      'leads',
+      'handoffs',
+      'conversations',
+      'messages'
+    ]);
+  });
+
+  it('updates the existing lead for this conversation instead of creating a second one', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
+      )
+      .mockReturnValueOnce(chainable({ data: null })) // idempotency check: none found
+      .mockReturnValueOnce(chainable({ data: { id: 'lead-existing-1' } })) // leads select: found
+      .mockReturnValueOnce(chainable({ error: null })) // leads update
+      .mockReturnValueOnce(chainable({ error: null })) // handoffs insert
+      .mockReturnValueOnce(chainable({ error: null })) // conversations update
+      .mockReturnValueOnce(chainable({ error: null })); // messages insert
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({
+      ...validParams,
+      clientRequestId: 'client-request-2',
+      sessionToken: tokenFor()
+    });
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(from).toHaveBeenCalledTimes(9);
+  });
+
+  it('returns ok without writing anything a second time for a replayed clientRequestId', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
+      )
+      .mockReturnValueOnce(chainable({ data: { id: 'handoff-already-created' } })); // idempotency check: found
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(from).toHaveBeenCalledTimes(4); // never touches leads, never inserts a second handoff or message
+  });
+
+  it('treats a unique-violation race on insert (two identical concurrent submissions) as success, not an error', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
+      )
+      .mockReturnValueOnce(chainable({ data: null })) // idempotency pre-check: not yet visible
+      .mockReturnValueOnce(chainable({ data: null })) // leads select
+      .mockReturnValueOnce(chainable({ error: null })) // leads insert
+      .mockReturnValueOnce(chainable({ error: { code: '23505' } })); // handoffs insert: lost the race
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(from).toHaveBeenCalledTimes(7); // never updates the conversation or sends a second acknowledgement
+  });
+
+  it('fails closed when the handoff insert fails for a reason other than a duplicate', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_A }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_A_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-a-1', detected_language: 'en', human_takeover: false } })
+      )
+      .mockReturnValueOnce(chainable({ data: null }))
+      .mockReturnValueOnce(chainable({ data: null }))
+      .mockReturnValueOnce(chainable({ error: null }))
+      .mockReturnValueOnce(chainable({ error: { code: 'XX000' } })); // handoffs insert: infrastructure error
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({ ...validParams, sessionToken: tokenFor() });
+
+    expect(result).toEqual({ status: 'unavailable' });
+  });
+
+  it('scopes a second business’s handoff request to its own business — never leaks into business A’s data', async () => {
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: BUSINESS_B }))
+      .mockReturnValueOnce(chainable({ data: WIDGET_SETTINGS_B_HANDOFF_ENABLED }))
+      .mockReturnValueOnce(
+        chainable({ data: { id: 'conv-b-1', detected_language: 'en', human_takeover: false } })
+      )
+      .mockReturnValueOnce(chainable({ data: null }))
+      .mockReturnValueOnce(chainable({ data: null }))
+      .mockReturnValueOnce(chainable({ error: null }))
+      .mockReturnValueOnce(chainable({ error: null }))
+      .mockReturnValueOnce(chainable({ error: null }))
+      .mockReturnValueOnce(chainable({ error: null }));
+    vi.mocked(createSupabaseServiceRoleClient).mockReturnValue(mockClient(from));
+
+    const result = await submitHandoffRequest({
+      publicWidgetId: 'widget-b',
+      visitorId: 'visitor-2',
+      conversationId: 'conv-b-1',
+      clientRequestId: 'client-request-b-1',
+      name: 'Business B Visitor',
+      phone: '+1 555 000 1234',
+      originHeader: 'https://b.example.com',
+      sessionToken: issueWidgetSessionToken({
+        publicWidgetId: 'widget-b',
+        conversationId: 'conv-b-1',
+        visitorId: 'visitor-2'
+      })!
+    });
+
+    expect(result).toEqual({ status: 'ok' });
+    expect(from).toHaveBeenCalledTimes(9);
   });
 });

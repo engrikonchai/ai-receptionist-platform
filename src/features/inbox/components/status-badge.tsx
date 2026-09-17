@@ -1,7 +1,7 @@
 import { Icons } from '@/components/icons';
 import { Badge } from '@/components/ui/badge';
 import { cn } from '@/lib/utils';
-import { HANDOFF_STATUS_LABEL } from '../utils/format';
+import { handoffStatusIndicatorLabel } from '../utils/format';
 import type { ConversationStatus, HandoffStatus } from '../api/types';
 
 /** Conversation lifecycle: open, handed off, or closed. Always pairs an icon with a text label. */
@@ -63,21 +63,34 @@ export function HumanTakeoverBadge({
   );
 }
 
-/** Only rendered when a `handoffs` row exists for the conversation. */
+/**
+ * Only rendered when a `handoffs` row exists for the conversation.
+ * `humanTakeover` disambiguates the one status (`contacted`) that alone
+ * doesn't say whether an owner is actively handling it or already sent
+ * it back to automation — see handoffStatusIndicatorLabel() in
+ * utils/format.ts.
+ */
 export function HandoffStatusIndicator({
   status,
+  humanTakeover,
   className
 }: {
   status: HandoffStatus;
+  humanTakeover: boolean;
   className?: string;
 }) {
+  const label = handoffStatusIndicatorLabel(status, humanTakeover);
+  const isSettled = status === 'resolved' || (status === 'contacted' && !humanTakeover);
+  const Icon =
+    status === 'new' ? Icons.warning : status === 'resolved' ? Icons.circleCheck : Icons.humanAgent;
+
   return (
     <Badge
-      variant={status === 'resolved' ? 'outline' : 'destructive'}
-      className={cn('gap-1', status === 'resolved' && 'text-muted-foreground', className)}
+      variant={isSettled ? 'outline' : status === 'new' ? 'destructive' : 'secondary'}
+      className={cn('gap-1', isSettled && 'text-muted-foreground', className)}
     >
-      <Icons.humanAgent className='size-3' aria-hidden='true' />
-      Handoff {HANDOFF_STATUS_LABEL[status].toLowerCase()}
+      <Icon className='size-3' aria-hidden='true' />
+      {label}
     </Badge>
   );
 }

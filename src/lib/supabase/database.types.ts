@@ -14,11 +14,11 @@
  * `widget_settings.widget_enabled` / `widget_settings.allowed_origins`
  * plus the `resolve_widget_config` function
  * (supabase/migrations/20260916120000_widget_allowed_origins.sql), and
- * `widget_settings.installation_confirmed` /
- * `installation_confirmed_at`
- * (supabase/migrations/20260917140000_widget_installation_confirmed.sql)
- * — see each file's header for why it's safe. None of these have been
- * applied yet.
+ * `widget_settings.installation_confirmed` / `installation_confirmed_at`
+ * (supabase/migrations/20260917140000_widget_installation_confirmed.sql
+ * — confirmed applied), and `handoffs.client_request_id`
+ * (supabase/migrations/20260918090000_handoff_idempotency.sql — NOT
+ * applied yet) — see each file's header for why it's safe.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -142,6 +142,8 @@ export interface HandoffRow {
   question: string | null;
   reason: string | null;
   status: HandoffStatus;
+  /** Idempotency key for a visitor-submitted handoff request — see supabase/migrations/20260918090000_handoff_idempotency.sql. Not applied yet. Null for any handoff row created another way. */
+  client_request_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -161,7 +163,7 @@ export interface WidgetSettingsRow {
   human_handoff_enabled: boolean;
   /** Normalized "scheme://hostname[:port]" origins allowed to embed this widget (see src/lib/public-widget/origin.ts). Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
   allowed_origins: string[];
-  /** Owner attestation that they installed and tested the widget on their own site — see supabase/migrations/20260917140000_widget_installation_confirmed.sql. Not applied yet. */
+  /** Owner attestation that they installed and tested the widget on their own site — see supabase/migrations/20260917140000_widget_installation_confirmed.sql. */
   installation_confirmed: boolean;
   installation_confirmed_at: string | null;
   created_at: string;
