@@ -53,7 +53,7 @@ export function TagsField({
         {label}
         {required && ' *'}
       </FieldLabel>
-      <div className='flex gap-2'>
+      <div className='flex flex-col gap-2 sm:flex-row'>
         <Input
           value={tagInput}
           onChange={(e) => {
@@ -72,8 +72,14 @@ export function TagsField({
           aria-describedby={
             addError ? `${field.name}-add-error` : isInvalid ? `${field.name}-error` : undefined
           }
+          className='min-w-0 flex-1'
         />
-        <Button type='button' variant='secondary' onClick={addTag}>
+        <Button
+          type='button'
+          variant='secondary'
+          onClick={addTag}
+          className='h-11 w-full shrink-0 sm:h-9 sm:w-auto'
+        >
           Add
         </Button>
       </div>
@@ -85,13 +91,17 @@ export function TagsField({
       {values.length > 0 && (
         <div className='flex flex-wrap gap-2'>
           {values.map((tag, idx) => (
-            <Badge key={tag} variant='secondary' className='gap-1'>
-              {tag}
+            <Badge
+              key={tag}
+              variant='secondary'
+              className='h-auto max-w-full gap-1 py-1.5 pr-1.5 whitespace-normal'
+            >
+              <span className='break-all'>{tag}</span>
               <button
                 type='button'
                 onClick={() => field.removeValue(idx)}
                 aria-label={`Remove ${tag}`}
-                className='hover:text-destructive ml-0.5'
+                className='hover:text-destructive -m-1.5 flex size-8 shrink-0 items-center justify-center'
               >
                 <Icons.close className='h-3 w-3' />
               </button>

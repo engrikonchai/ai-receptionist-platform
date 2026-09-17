@@ -49,15 +49,21 @@ export function InstallSnippetCard({
       <CardHeader>
         <CardTitle>Install on your website</CardTitle>
         <CardDescription>Your public widget ID</CardDescription>
-        <p className='bg-muted text-foreground w-fit rounded-md px-2 py-1 font-mono text-sm break-all'>
+        <p className='bg-muted text-foreground max-w-full rounded-md px-2 py-1 font-mono text-sm break-all'>
           {publicWidgetId}
         </p>
       </CardHeader>
       <CardContent className='space-y-4'>
         <div className='space-y-2'>
-          <div className='flex items-center justify-between gap-2'>
+          <div className='flex flex-wrap items-center justify-between gap-2'>
             <span className='text-sm font-medium'>Installation code</span>
-            <Button type='button' size='sm' variant='outline' onClick={handleCopy}>
+            <Button
+              type='button'
+              size='sm'
+              variant='outline'
+              onClick={handleCopy}
+              className='h-9 px-3'
+            >
               {copied ? (
                 <>
                   <Icons.check className='size-3.5' aria-hidden='true' />
@@ -71,7 +77,7 @@ export function InstallSnippetCard({
               )}
             </Button>
           </div>
-          <pre className='bg-muted overflow-x-auto rounded-md p-3 text-xs'>
+          <pre className='bg-muted max-w-full overflow-x-auto rounded-md p-3 text-xs'>
             <code>{snippet}</code>
           </pre>
         </div>

@@ -180,7 +180,7 @@ function Sidebar({
           data-sidebar='sidebar'
           data-slot='sidebar'
           data-mobile='true'
-          className='w-(--sidebar-width) bg-sidebar p-0 text-sidebar-foreground [&>button]:hidden'
+          className='w-(--sidebar-width) bg-sidebar p-0 pt-[env(safe-area-inset-top)] pb-[env(safe-area-inset-bottom)] text-sidebar-foreground [&>button]:hidden'
           style={
             {
               '--sidebar-width': SIDEBAR_WIDTH_MOBILE
@@ -192,7 +192,7 @@ function Sidebar({
             <SheetTitle>Sidebar</SheetTitle>
             <SheetDescription>Displays the mobile sidebar.</SheetDescription>
           </SheetHeader>
-          <div className='flex h-full w-full flex-col'>{children}</div>
+          <div className='flex h-full min-h-0 w-full flex-col'>{children}</div>
         </SheetContent>
       </Sheet>
     );
@@ -253,7 +253,7 @@ function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<t
       data-slot='sidebar-trigger'
       variant='ghost'
       size='icon-sm'
-      className={cn(className)}
+      className={cn('size-11 md:size-7', className)}
       onClick={(event) => {
         onClick?.(event);
         toggleSidebar();

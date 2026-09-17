@@ -12,7 +12,7 @@ import { WidgetSettingsForm } from './widget-settings-form';
 
 function WidgetSkeleton() {
   return (
-    <div className='grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]' aria-hidden='true'>
+    <div className='grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_360px]' aria-hidden='true'>
       <div className='space-y-6'>
         {Array.from({ length: 3 }).map((_, index) => (
           <Card key={index}>

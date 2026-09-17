@@ -33,7 +33,7 @@ function isLanguageCode(value: string): value is LanguageCode {
 export default async function OnboardingPage() {
   if (!isSupabaseConfigured()) {
     return (
-      <div className='flex min-h-screen items-center justify-center p-4'>
+      <div className='flex min-h-dvh items-center justify-center p-4'>
         <div className='border-destructive/30 bg-destructive/10 max-w-md rounded-2xl border p-6 text-sm'>
           <p className='text-foreground font-semibold'>Dev only — Supabase not configured</p>
           <p className='text-muted-foreground mt-2'>{SUPABASE_MISSING_ENV_MESSAGE}</p>
