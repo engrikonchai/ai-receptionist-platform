@@ -2,7 +2,11 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
-import { InstallSnippetCard, buildInstallSnippet } from './install-snippet-card';
+import {
+  InstallSnippetCard,
+  buildInstallSnippet,
+  buildOpenEventSnippet
+} from './install-snippet-card';
 
 const PUBLIC_WIDGET_ID = '11111111-1111-4111-8111-111111111111';
 const SITE_ORIGIN = 'https://platform.example';
@@ -49,5 +53,31 @@ describe('InstallSnippetCard', () => {
     expect(screen.getByText(/paste it just before the closing/)).toBeInTheDocument();
     expect(screen.getByText(/Publish\/deploy your website\./)).toBeInTheDocument();
     expect(screen.getByText(/Open your live site as a visitor/)).toBeInTheDocument();
+  });
+
+  it('includes the optional open-from-your-own-button example with the real widget id', () => {
+    render(<InstallSnippetCard siteOrigin={SITE_ORIGIN} publicWidgetId={PUBLIC_WIDGET_ID} />);
+
+    expect(screen.getByText('Optional: open the widget from your own button')).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        (_content, element) =>
+          element?.tagName === 'CODE' &&
+          element.textContent === buildOpenEventSnippet(PUBLIC_WIDGET_ID)
+      )
+    ).toBeInTheDocument();
+  });
+});
+
+describe('buildOpenEventSnippet', () => {
+  it('dispatches the documented ai-receptionist:open event with the real widget id, nothing else', () => {
+    const snippet = buildOpenEventSnippet(PUBLIC_WIDGET_ID);
+
+    expect(snippet).toContain("new CustomEvent('ai-receptionist:open'");
+    expect(snippet).toContain(`widgetId: '${PUBLIC_WIDGET_ID}'`);
+    // No Shadow DOM traversal, no internal class name, no business id or
+    // secret of any kind belongs in a snippet meant for a customer's page.
+    expect(snippet).not.toMatch(/shadowRoot|querySelector\(['"]\.(launcher|panel)/);
+    expect(snippet).not.toMatch(/businessId|sessionToken|secret/i);
   });
 });
