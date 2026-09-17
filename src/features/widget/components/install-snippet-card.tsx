@@ -40,10 +40,17 @@ export function buildOpenEventSnippet(publicWidgetId: string): string {
 
 export function InstallSnippetCard({
   siteOrigin,
-  publicWidgetId
+  publicWidgetId,
+  installationConfirmedAt = null,
+  onConfirmInstall,
+  isConfirming = false
 }: {
   siteOrigin: string;
   publicWidgetId: string;
+  /** widget_settings.installation_confirmed_at — null until the owner confirms. When the confirm affordance isn't needed (e.g. a read-only context), leave `onConfirmInstall` unset and it's simply not rendered. */
+  installationConfirmedAt?: string | null;
+  onConfirmInstall?: () => void;
+  isConfirming?: boolean;
 }) {
   const [copied, setCopied] = useState(false);
   const snippet = buildInstallSnippet(siteOrigin, publicWidgetId);
@@ -112,6 +119,40 @@ export function InstallSnippetCard({
           The widget only responds on domains you&apos;ve allowed below — add your website&apos;s
           domain there first, or the chat button won&apos;t reply to visitors.
         </p>
+
+        {onConfirmInstall && (
+          <div className='rounded-lg border p-3'>
+            {installationConfirmedAt ? (
+              <p className='text-foreground flex items-center gap-2 text-sm font-medium'>
+                <Icons.circleCheck className='text-primary size-4 shrink-0' aria-hidden='true' />
+                Installed and tested on{' '}
+                {new Date(installationConfirmedAt).toLocaleDateString(undefined, {
+                  year: 'numeric',
+                  month: 'short',
+                  day: 'numeric'
+                })}
+              </p>
+            ) : (
+              <>
+                <p className='text-muted-foreground mb-2 text-xs'>
+                  Once you&apos;ve pasted the code above onto your live site and tried the chat
+                  button, confirm it here.
+                </p>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  onClick={onConfirmInstall}
+                  disabled={isConfirming}
+                  className='h-9 w-full sm:w-auto'
+                >
+                  <Icons.check className='size-3.5' aria-hidden='true' />
+                  {isConfirming ? 'Saving…' : "I've installed and tested it"}
+                </Button>
+              </>
+            )}
+          </div>
+        )}
 
         <details className='group'>
           <summary className='text-sm font-medium hover:cursor-pointer'>

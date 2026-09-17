@@ -11,7 +11,7 @@ const WIDGET_PATH = '/dashboard/widget';
 
 const BUSINESS_SELECT = 'public_widget_id, supported_languages, default_language, handoff_email';
 const WIDGET_SELECT =
-  'title, welcome_message_en, welcome_message_me, welcome_message_ru, primary_color, position, widget_enabled, human_handoff_enabled, allowed_origins';
+  'title, welcome_message_en, welcome_message_me, welcome_message_ru, primary_color, position, widget_enabled, human_handoff_enabled, allowed_origins, installation_confirmed_at';
 
 type BusinessSelectRow = Pick<
   BusinessRow,
@@ -28,6 +28,7 @@ type WidgetSelectRow = Pick<
   | 'widget_enabled'
   | 'human_handoff_enabled'
   | 'allowed_origins'
+  | 'installation_confirmed_at'
 >;
 
 function toWidgetSettings(business: BusinessSelectRow, widget: WidgetSelectRow): WidgetSettings {
@@ -43,7 +44,8 @@ function toWidgetSettings(business: BusinessSelectRow, widget: WidgetSelectRow):
     supportedLanguages: business.supported_languages,
     humanHandoffEnabled: widget.human_handoff_enabled,
     handoffEmail: business.handoff_email ?? '',
-    allowedOrigins: widget.allowed_origins
+    allowedOrigins: widget.allowed_origins,
+    installationConfirmedAt: widget.installation_confirmed_at
   };
 }
 
@@ -77,9 +79,9 @@ export async function fetchWidgetSettings(
 
 /**
  * Saves the widget form in a fixed order — businesses, then
- * widget_settings — and stops at the first failure, mirroring
- * src/features/onboarding/actions/complete-onboarding.ts's own
- * two-table update pattern. `businessId` is never accepted from the
+ * widget_settings — and stops at the first failure, the same
+ * fixed-order-update pattern src/features/onboarding/api/service.ts's
+ * own save actions use. `businessId` is never accepted from the
  * form's own values (it's the verified id, threaded in separately by
  * the caller — see queries.ts), and this never touches `businesses.id`,
  * `slug`, `public_widget_id`, or `owner_id`.
@@ -127,5 +129,36 @@ export async function saveWidgetSettings(
   if (widgetUpdateError) return { success: false, error: GENERIC_SAVE_ERROR };
 
   revalidatePath(WIDGET_PATH);
+  return { success: true };
+}
+
+const OVERVIEW_PATH = '/dashboard/overview';
+
+/**
+ * The owner's own attestation that they copied the installation
+ * snippet, installed it on their website, and checked it works —
+ * see supabase/migrations/20260917140000_widget_installation_confirmed.sql
+ * for why this can't be derived from anything else already stored.
+ * A plain idempotent UPDATE, like every other write in this file:
+ * calling it again (re-confirming from the onboarding flow after
+ * already confirming from the Widget page, or vice versa) just
+ * refreshes the timestamp on the same single widget_settings row —
+ * never a second row, never an error.
+ */
+export async function confirmWidgetInstallation(businessId: string): Promise<WidgetActionResult> {
+  const verified = await verifyActiveBusiness(businessId);
+  if (!verified.ok) return { success: false, error: verified.error };
+  const { supabase, businessId: verifiedId } = verified.ctx;
+
+  const { error } = await supabase
+    .from('widget_settings')
+    .update({ installation_confirmed: true, installation_confirmed_at: new Date().toISOString() })
+    .eq('business_id', verifiedId);
+
+  if (error) return { success: false, error: GENERIC_SAVE_ERROR };
+
+  revalidatePath(WIDGET_PATH);
+  // The setup checklist on Dashboard Overview reads this same field.
+  revalidatePath(OVERVIEW_PATH);
   return { success: true };
 }

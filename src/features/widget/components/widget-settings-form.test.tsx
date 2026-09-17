@@ -7,9 +7,11 @@ import type { WidgetActionResult } from '../api/types';
 import { WidgetSettingsForm } from './widget-settings-form';
 
 const mutationFn = vi.fn<(input: unknown) => Promise<WidgetActionResult>>();
+const confirmInstallMutationFn = vi.fn<() => Promise<WidgetActionResult>>();
 
 vi.mock('../api/queries', () => ({
-  saveWidgetSettingsMutation: () => ({ mutationFn })
+  saveWidgetSettingsMutation: () => ({ mutationFn }),
+  confirmWidgetInstallationMutation: () => ({ mutationFn: confirmInstallMutationFn })
 }));
 
 const baseSettings = {
@@ -24,7 +26,8 @@ const baseSettings = {
   supportedLanguages: ['en'],
   humanHandoffEnabled: false,
   handoffEmail: '',
-  allowedOrigins: ['example.com']
+  allowedOrigins: ['example.com'],
+  installationConfirmedAt: null as string | null
 };
 
 function renderForm() {
@@ -43,6 +46,7 @@ function renderForm() {
 
 beforeEach(() => {
   mutationFn.mockReset();
+  confirmInstallMutationFn.mockReset().mockResolvedValue({ success: true });
 });
 
 describe('WidgetSettingsForm — saving settings', () => {
@@ -172,6 +176,44 @@ describe('WidgetSettingsForm — allowed website origins', () => {
     await user.click(screen.getByRole('button', { name: 'Remove example.com' }));
 
     expect(screen.queryByRole('button', { name: 'Remove example.com' })).not.toBeInTheDocument();
+  });
+});
+
+describe('WidgetSettingsForm — installation confirmation', () => {
+  it('shows a confirm button when installation has not been confirmed yet', () => {
+    renderForm();
+
+    expect(
+      screen.getByRole('button', { name: /I've installed and tested it/ })
+    ).toBeInTheDocument();
+  });
+
+  it('calls the confirm mutation when the owner confirms installation', async () => {
+    const user = userEvent.setup();
+    renderForm();
+
+    await user.click(screen.getByRole('button', { name: /I've installed and tested it/ }));
+
+    await waitFor(() => expect(confirmInstallMutationFn).toHaveBeenCalledTimes(1));
+  });
+
+  it('shows the confirmed date instead of the button once installationConfirmedAt is set', () => {
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <WidgetSettingsForm
+          businessId='biz-1'
+          defaultLanguage='en'
+          settings={{ ...baseSettings, installationConfirmedAt: '2026-01-15T10:00:00.000Z' }}
+          siteOrigin='https://platform.example'
+        />
+      </QueryClientProvider>
+    );
+
+    expect(screen.getByText(/Installed and tested on/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /I've installed and tested it/ })
+    ).not.toBeInTheDocument();
   });
 });
 

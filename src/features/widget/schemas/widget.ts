@@ -61,7 +61,7 @@ export function describeInvalidOrigin(value: string): string | null {
  * byte-for-byte — normalizing once, here, on save, keeps that true
  * without the owner ever having to type a scheme themselves.
  */
-const originHostSchema = z
+export const originHostSchema = z
   .string()
   .trim()
   .min(1, 'Enter a domain.')
