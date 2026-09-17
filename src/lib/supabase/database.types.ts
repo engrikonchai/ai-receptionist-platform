@@ -10,12 +10,15 @@
  * `profiles.onboarding_completed` / `onboarding_completed_at`
  * (supabase/migrations/20260915000100_platform_onboarding.sql),
  * `messages.sender_type` / `messages.client_message_id`
- * (supabase/migrations/20260915170200_inbox_human_replies.sql), and
+ * (supabase/migrations/20260915170200_inbox_human_replies.sql),
  * `widget_settings.widget_enabled` / `widget_settings.allowed_origins`
  * plus the `resolve_widget_config` function
- * (supabase/migrations/20260916120000_widget_allowed_origins.sql) — see
- * each file's header for why it's safe. None of these have been applied
- * yet.
+ * (supabase/migrations/20260916120000_widget_allowed_origins.sql), and
+ * `widget_settings.installation_confirmed` /
+ * `installation_confirmed_at`
+ * (supabase/migrations/20260917140000_widget_installation_confirmed.sql)
+ * — see each file's header for why it's safe. None of these have been
+ * applied yet.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -158,6 +161,9 @@ export interface WidgetSettingsRow {
   human_handoff_enabled: boolean;
   /** Normalized "scheme://hostname[:port]" origins allowed to embed this widget (see src/lib/public-widget/origin.ts). Empty means nowhere yet — never "allow all". See supabase/migrations/20260916120000_widget_allowed_origins.sql. Not applied yet. */
   allowed_origins: string[];
+  /** Owner attestation that they installed and tested the widget on their own site — see supabase/migrations/20260917140000_widget_installation_confirmed.sql. Not applied yet. */
+  installation_confirmed: boolean;
+  installation_confirmed_at: string | null;
   created_at: string;
   updated_at: string;
 }

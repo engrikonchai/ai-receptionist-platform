@@ -8,7 +8,7 @@
  */
 import { mutationOptions, queryOptions } from '@tanstack/react-query';
 import { getQueryClient } from '@/lib/query-client';
-import { fetchWidgetSettings, saveWidgetSettings } from './service';
+import { confirmWidgetInstallation, fetchWidgetSettings, saveWidgetSettings } from './service';
 import type { WidgetSettingsInput } from './types';
 
 export const widgetKeys = {
@@ -26,6 +26,17 @@ export function saveWidgetSettingsMutation(businessId: string, defaultLanguage: 
   return mutationOptions({
     mutationFn: (input: WidgetSettingsInput) =>
       saveWidgetSettings(businessId, defaultLanguage, input),
+    onSuccess: (result) => {
+      if (result.success) {
+        void getQueryClient().invalidateQueries({ queryKey: widgetKeys.settings(businessId) });
+      }
+    }
+  });
+}
+
+export function confirmWidgetInstallationMutation(businessId: string) {
+  return mutationOptions({
+    mutationFn: () => confirmWidgetInstallation(businessId),
     onSuccess: (result) => {
       if (result.success) {
         void getQueryClient().invalidateQueries({ queryKey: widgetKeys.settings(businessId) });

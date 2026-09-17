@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { verifyActiveBusiness } from './authorize';
 import { GENERIC_LOAD_ERROR, GENERIC_SAVE_ERROR, SESSION_EXPIRED_MESSAGE } from './types';
-import { fetchWidgetSettings, saveWidgetSettings } from './service';
+import { confirmWidgetInstallation, fetchWidgetSettings, saveWidgetSettings } from './service';
 import type { WidgetSettingsInput } from './types';
 
 vi.mock('./authorize', () => ({
@@ -59,7 +59,8 @@ const widgetRow = {
   position: 'bottom-right',
   widget_enabled: true,
   human_handoff_enabled: true,
-  allowed_origins: ['https://example.com']
+  allowed_origins: ['https://example.com'],
+  installation_confirmed_at: null
 };
 
 const validInput: WidgetSettingsInput = {
@@ -122,7 +123,8 @@ describe('fetchWidgetSettings', () => {
       supportedLanguages: ['en', 'me'],
       humanHandoffEnabled: true,
       handoffEmail: 'owner@example.com',
-      allowedOrigins: ['https://example.com']
+      allowedOrigins: ['https://example.com'],
+      installationConfirmedAt: null
     });
     expect(result.defaultLanguage).toBe('en');
   });
@@ -229,6 +231,59 @@ describe('saveWidgetSettings', () => {
     mockVerifiedBusiness(from);
 
     const result = await saveWidgetSettings(VERIFIED_BUSINESS_ID, 'en', validInput);
+
+    expect(result).toEqual({ success: false, error: GENERIC_SAVE_ERROR });
+  });
+});
+
+describe('confirmWidgetInstallation', () => {
+  it('propagates the authorization failure instead of writing anything', async () => {
+    vi.mocked(verifyActiveBusiness).mockResolvedValue({
+      ok: false,
+      error: SESSION_EXPIRED_MESSAGE
+    });
+
+    const result = await confirmWidgetInstallation('biz-1');
+
+    expect(result).toEqual({ success: false, error: SESSION_EXPIRED_MESSAGE });
+  });
+
+  it('sets installation_confirmed and installation_confirmed_at on the verified business’s widget_settings row', async () => {
+    const update = vi.fn().mockReturnValue(chainable({ error: null }));
+    const from = vi.fn().mockReturnValue({ update });
+    mockVerifiedBusiness(from);
+
+    const result = await confirmWidgetInstallation(VERIFIED_BUSINESS_ID);
+
+    expect(result).toEqual({ success: true });
+    expect(from).toHaveBeenCalledWith('widget_settings');
+    expect(update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        installation_confirmed: true,
+        installation_confirmed_at: expect.any(String)
+      })
+    );
+  });
+
+  it('is idempotent — calling it again just refreshes the timestamp, never errors', async () => {
+    const update = vi.fn().mockReturnValue(chainable({ error: null }));
+    const from = vi.fn().mockReturnValue({ update });
+    mockVerifiedBusiness(from);
+
+    const first = await confirmWidgetInstallation(VERIFIED_BUSINESS_ID);
+    const second = await confirmWidgetInstallation(VERIFIED_BUSINESS_ID);
+
+    expect(first).toEqual({ success: true });
+    expect(second).toEqual({ success: true });
+    expect(update).toHaveBeenCalledTimes(2);
+  });
+
+  it('returns a friendly error on a database failure', async () => {
+    const update = vi.fn().mockReturnValue(chainable({ error: { message: 'db down' } }));
+    const from = vi.fn().mockReturnValue({ update });
+    mockVerifiedBusiness(from);
+
+    const result = await confirmWidgetInstallation(VERIFIED_BUSINESS_ID);
 
     expect(result).toEqual({ success: false, error: GENERIC_SAVE_ERROR });
   });

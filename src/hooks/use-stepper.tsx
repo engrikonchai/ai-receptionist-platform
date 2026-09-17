@@ -69,6 +69,10 @@ type UseFormStepperOptions = {
    *  the whole form (not just the last step); on failure the wizard jumps to
    *  the first failing step and surfaces its errors. */
   fullSchema?: ZodTypeAny;
+  /** Step to start on (1-based), e.g. resuming an interrupted wizard at
+   *  whichever step is still incomplete. Clamped to [1, schemas.length]
+   *  exactly like `goToStep()`. Defaults to 1. */
+  initialStep?: number;
 };
 
 /**
@@ -84,7 +88,9 @@ type UseFormStepperOptions = {
  */
 export function useFormStepper(schemas: ZodTypeAny[], options?: UseFormStepperOptions) {
   const stepCount = schemas.length;
-  const [currentStep, setCurrentStep] = useState(1); // Start from 1
+  const [currentStep, setCurrentStep] = useState(() =>
+    Math.min(Math.max(options?.initialStep ?? 1, 1), stepCount)
+  );
 
   const goToNextStep = useCallback(() => {
     setCurrentStep((prev) => Math.min(prev + 1, stepCount));

@@ -3,6 +3,7 @@ import type { Metadata } from 'next';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { loadOwnerContext } from '@/lib/supabase/owner-context';
 import type { WidgetSettingsRow } from '@/lib/supabase/database.types';
+import { getSiteUrl } from '@/lib/site-url';
 import { AccountRecovery } from '@/features/auth/components/account-recovery';
 import { OnboardingShell } from '@/features/onboarding/components/onboarding-shell';
 import {
@@ -15,6 +16,7 @@ import {
   type BusinessType,
   type LanguageCode
 } from '@/features/onboarding/schemas/onboarding';
+import { resolveOnboardingResumeStep } from '@/features/onboarding/utils/setup-progress';
 
 export const metadata: Metadata = {
   title: 'Set up your business'
@@ -56,16 +58,44 @@ export default async function OnboardingPage() {
     redirect('/dashboard/overview');
   }
 
-  // "Load a business owned by that user" — same rule the completion
-  // action uses: the oldest business RLS returns for this owner.
+  // This one-time wizard is deliberately scoped to a single business —
+  // "Load a business owned by that user" — the same rule every step's
+  // own save action re-verifies against: the oldest business RLS
+  // returns for this owner. An owner with more than one business
+  // completes setup for any additional ones through the dashboard's own
+  // setup checklist (src/app/dashboard/overview), never by repeating
+  // this wizard — see resolveOnboardingResumeStep's own doc comment.
   const business = ctx.businesses[0];
-  const { data: widgetSettings } = await ctx.supabase
-    .from('widget_settings')
-    .select('*')
-    .eq('business_id', business.id)
-    .maybeSingle();
+  const [{ data: widgetSettingsRow }, { count: activeKnowledgeItemCount }] = await Promise.all([
+    ctx.supabase.from('widget_settings').select('*').eq('business_id', business.id).maybeSingle(),
+    ctx.supabase
+      .from('knowledge_items')
+      .select('id', { count: 'exact', head: true })
+      .eq('business_id', business.id)
+      .eq('is_active', true)
+  ]);
 
-  const widget = widgetSettings as WidgetSettingsRow | null;
+  const widget = widgetSettingsRow as WidgetSettingsRow | null;
+
+  // A brand-new business always has a widget_settings row too (both are
+  // created together by the shared signup trigger) — this fallback only
+  // guards against that invariant somehow not holding, without ever
+  // crashing the wizard.
+  const widgetForResume = {
+    widget_enabled: widget?.widget_enabled ?? true,
+    title: widget?.title ?? '',
+    welcome_message_en: widget?.welcome_message_en ?? null,
+    welcome_message_me: widget?.welcome_message_me ?? null,
+    welcome_message_ru: widget?.welcome_message_ru ?? null,
+    allowed_origins: widget?.allowed_origins ?? [],
+    installation_confirmed: widget?.installation_confirmed ?? false
+  };
+
+  const initialStep = resolveOnboardingResumeStep({
+    activeKnowledgeItemCount: activeKnowledgeItemCount ?? 0,
+    widget: widgetForResume,
+    onboardingCompleted: ctx.profile.onboarding_completed
+  });
 
   const defaultLanguage: LanguageCode = isLanguageCode(business.default_language)
     ? business.default_language
@@ -81,18 +111,30 @@ export default async function OnboardingPage() {
     businessName: business.name,
     businessType: isBusinessType(business.business_type) ? business.business_type : 'other',
     location: business.location ?? '',
+    websiteUrl: '',
     defaultLanguage,
     supportedLanguages: business.supported_languages.filter(isLanguageCode).length
       ? business.supported_languages.filter(isLanguageCode)
       : ['en'],
+    assistantName: widget?.title ?? '',
+    welcomeMessage: welcomeMessageByLanguage[defaultLanguage] ?? '',
+    primaryColor: widget?.primary_color ?? '#1677ff',
+    position: widget?.position ?? 'bottom-right',
+    humanHandoffEnabled: widget?.human_handoff_enabled ?? false,
     handoffEmail: business.handoff_email ?? ctx.user.email ?? '',
-    widgetTitle: widget?.title ?? '',
-    welcomeMessage: welcomeMessageByLanguage[defaultLanguage] ?? ''
+    allowedOrigins: widget?.allowed_origins ?? []
   };
 
   return (
     <OnboardingShell>
-      <OnboardingFlow defaultValues={defaults} />
+      <OnboardingFlow
+        businessId={business.id}
+        publicWidgetId={business.public_widget_id}
+        siteOrigin={getSiteUrl()}
+        installationConfirmedAt={widget?.installation_confirmed_at ?? null}
+        defaultValues={defaults}
+        initialStep={initialStep}
+      />
     </OnboardingShell>
   );
 }

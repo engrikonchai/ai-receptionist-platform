@@ -7,7 +7,7 @@ import { toast } from 'sonner';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { FieldGroup, FieldSeparator, FieldSet, FieldLegend } from '@/components/ui/field';
 import { useAppForm } from '@/lib/form';
-import { saveWidgetSettingsMutation } from '../api/queries';
+import { confirmWidgetInstallationMutation, saveWidgetSettingsMutation } from '../api/queries';
 import type { WidgetSettings } from '../api/types';
 import {
   describeInvalidOrigin,
@@ -50,6 +50,7 @@ export function WidgetSettingsForm({
 }) {
   const [formError, setFormError] = useState<string | null>(null);
   const saveMutation = useMutation(saveWidgetSettingsMutation(businessId, defaultLanguage));
+  const confirmInstallMutation = useMutation(confirmWidgetInstallationMutation(businessId));
 
   const form = useAppForm({
     defaultValues: {
@@ -317,7 +318,13 @@ export function WidgetSettingsForm({
           </CardContent>
         </Card>
 
-        <InstallSnippetCard siteOrigin={siteOrigin} publicWidgetId={settings.publicWidgetId} />
+        <InstallSnippetCard
+          siteOrigin={siteOrigin}
+          publicWidgetId={settings.publicWidgetId}
+          installationConfirmedAt={settings.installationConfirmedAt}
+          onConfirmInstall={() => confirmInstallMutation.mutate()}
+          isConfirming={confirmInstallMutation.isPending}
+        />
       </div>
     </form>
   );

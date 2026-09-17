@@ -39,8 +39,13 @@ export type WidgetSettings = {
   handoffEmail: string;
   /** widget_settings.allowed_origins — website origins allowed to embed this widget. */
   allowedOrigins: string[];
+  /** widget_settings.installation_confirmed_at — null until the owner confirms they installed and tested the widget on their own site. Read-only here; set only via confirmWidgetInstallation(). */
+  installationConfirmedAt: string | null;
 };
 
-export type WidgetSettingsInput = Omit<WidgetSettings, 'publicWidgetId'>;
+export type WidgetSettingsInput = Omit<
+  WidgetSettings,
+  'publicWidgetId' | 'installationConfirmedAt'
+>;
 
 export type WidgetActionResult = { success: true } | { success: false; error: string };
