@@ -137,3 +137,38 @@ describe('GET /api/public-widget/config', () => {
     expect(data).not.toHaveProperty('handoff_email');
   });
 });
+
+describe('GET /api/public-widget/config — reproducing the reported production failure', () => {
+  const PROD_WIDGET_ID = 'e3f351d2-82cb-4882-b668-c68f1e008bc1';
+  const PROD_ORIGIN = 'https://chatbot-demo-iota-two.vercel.app';
+
+  it('succeeds with the real CORS headers when the database config and rate limiter both behave as confirmed in production', async () => {
+    fetchWidgetPublicConfig.mockResolvedValue(config({ title: 'Adria Assistant' }));
+
+    const response = await GET(request(PROD_WIDGET_ID, PROD_ORIGIN));
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('Vary')).toBe('Origin');
+    const data = await response.json();
+    expect(data.enabled).toBe(true);
+    expect(fetchWidgetPublicConfig).toHaveBeenCalledWith(PROD_WIDGET_ID, PROD_ORIGIN);
+  });
+
+  it('returns 503 with CORS headers still present — matching the reported symptom of no widget mounting — when the durable rate limiter fails closed', async () => {
+    checkRateLimit.mockResolvedValue({ status: 'unavailable' });
+
+    const response = await GET(request(PROD_WIDGET_ID, PROD_ORIGIN));
+
+    expect(response.status).toBe(503);
+    // The CORS headers must still be present on this exact failure path:
+    // a same-shaped 503 with no Access-Control-Allow-Origin is
+    // indistinguishable, from the browser's point of view, from a
+    // network error — the loader's fetch() would be blocked from
+    // reading the response and silently no-op, exactly matching "no
+    // widget UI or launcher is mounted".
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe(PROD_ORIGIN);
+    expect(response.headers.get('Vary')).toBe('Origin');
+    expect(fetchWidgetPublicConfig).not.toHaveBeenCalled();
+  });
+});
