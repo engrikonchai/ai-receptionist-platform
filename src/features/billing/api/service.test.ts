@@ -66,6 +66,19 @@ function mockVerifiedBusiness(businessId = VERIFIED_BUSINESS_ID) {
 }
 
 const TEST_SITE_URL = 'https://app.example.com';
+const TEST_EXPIRES_AT = new Date('2026-01-01T00:31:00.000Z');
+
+function newClaim(
+  overrides: Partial<{ attemptId: string; generation: number; expiresAt: Date }> = {}
+) {
+  return {
+    kind: 'new' as const,
+    attemptId: 'attempt-1',
+    generation: 1,
+    expiresAt: TEST_EXPIRES_AT,
+    ...overrides
+  };
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -73,9 +86,9 @@ beforeEach(() => {
   isStripeConfigured.mockReturnValue(true);
   getStripePriceId.mockReturnValue('price_123');
   // Default: claim always wins outright (no concurrent attempt in play)
-  // — individual tests override this to exercise the reuse/retry paths.
-  claimCheckoutAttempt.mockResolvedValue({ kind: 'new', attemptId: 'attempt-1' });
-  recordCheckoutSession.mockResolvedValue(undefined);
+  // — individual tests override this to exercise the other claim kinds.
+  claimCheckoutAttempt.mockResolvedValue(newClaim());
+  recordCheckoutSession.mockResolvedValue({ ok: true });
 });
 
 describe('startCheckout — authorization', () => {
@@ -237,11 +250,13 @@ describe('startCheckout — duplicate prevention and customer reuse', () => {
 });
 
 describe('startCheckout — durable Checkout concurrency', () => {
-  it('creates the Stripe Checkout Session using the claimed attempt id as the idempotency key', async () => {
+  it('creates the Stripe Checkout Session using the claimed attempt id as the idempotency key, and the claimed expiresAt/generation', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
     mockVerifiedBusiness();
     createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
-    claimCheckoutAttempt.mockResolvedValue({ kind: 'new', attemptId: 'attempt-xyz' });
+    claimCheckoutAttempt.mockResolvedValue(
+      newClaim({ attemptId: 'attempt-xyz', generation: 7, expiresAt: TEST_EXPIRES_AT })
+    );
     const createSession = vi
       .fn()
       .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
@@ -250,10 +265,64 @@ describe('startCheckout — durable Checkout concurrency', () => {
     await startCheckout('biz-1');
 
     expect(createSession).toHaveBeenCalledWith(
-      expect.anything(),
+      expect.objectContaining({
+        expires_at: Math.floor(TEST_EXPIRES_AT.getTime() / 1000),
+        metadata: expect.objectContaining({ billing_generation: '7' })
+      }),
       expect.objectContaining({ idempotencyKey: 'attempt-xyz' })
     );
+    const callArgs = createSession.mock.calls[0][0];
+    expect(callArgs.subscription_data.metadata).toEqual(
+      expect.objectContaining({ billing_generation: '7' })
+    );
     expect(recordCheckoutSession).toHaveBeenCalledWith(expect.anything(), 'attempt-xyz', 'cs_1');
+  });
+
+  it('resumes with the SAME attempt id/idempotency key when the claim says resume, exactly like a fresh claim', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({
+      kind: 'resume',
+      attemptId: 'attempt-recovered',
+      generation: 3,
+      expiresAt: TEST_EXPIRES_AT
+    });
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_recovered', url: 'https://checkout.stripe.com/recovered' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(createSession).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ idempotencyKey: 'attempt-recovered' })
+    );
+    expect(result).toEqual({ status: 'ok', url: 'https://checkout.stripe.com/recovered' });
+  });
+
+  it('never generates a new idempotency key on a resume — it always reuses the claimed attemptId', async () => {
+    const from = vi.fn().mockReturnValue(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValueOnce(newClaim({ attemptId: 'attempt-same' }));
+    claimCheckoutAttempt.mockResolvedValueOnce({
+      kind: 'resume',
+      attemptId: 'attempt-same',
+      generation: 1,
+      expiresAt: TEST_EXPIRES_AT
+    });
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    await startCheckout('biz-1');
+    await startCheckout('biz-1');
+
+    const keys = createSession.mock.calls.map((call) => call[1].idempotencyKey);
+    expect(keys).toEqual(['attempt-same', 'attempt-same']);
   });
 
   it('reuses a concurrently-created Checkout Session instead of ever calling Stripe again', async () => {
@@ -273,6 +342,34 @@ describe('startCheckout — durable Checkout concurrency', () => {
     expect(createSession).not.toHaveBeenCalled();
   });
 
+  it('returns already_subscribed when the claim itself just synchronized a completed session', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({ kind: 'already_subscribed' });
+    const createSession = vi.fn();
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'already_subscribed' });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
+  it('returns processing, never a new Checkout, when a completed session exists but synchronization has not finished', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    claimCheckoutAttempt.mockResolvedValue({ kind: 'processing' });
+    const createSession = vi.fn();
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'processing' });
+    expect(createSession).not.toHaveBeenCalled();
+  });
+
   it('reports a generic, retryable error instead of racing a second session when the claim says retry', async () => {
     const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
     mockVerifiedBusiness();
@@ -285,6 +382,63 @@ describe('startCheckout — durable Checkout concurrency', () => {
 
     expect(result.status).toBe('error');
     expect(createSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('startCheckout — recoverable session recording', () => {
+  it('still returns the valid Checkout URL to this caller even when recordCheckoutSession itself fails', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+    recordCheckoutSession.mockResolvedValue({ ok: false, reason: 'db_error' });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'ok', url: 'https://checkout.stripe.com/x' });
+  });
+
+  it('a subsequent retry recovers the exact same Stripe Session via the same idempotency key after a recording failure, never a second session', async () => {
+    const from = vi.fn().mockReturnValue(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+
+    // First call: Stripe succeeds, but the DB write fails — the caller
+    // still gets the real, valid session url.
+    claimCheckoutAttempt.mockResolvedValueOnce(newClaim({ attemptId: 'attempt-1' }));
+    recordCheckoutSession.mockResolvedValueOnce({ ok: false, reason: 'db_error' });
+    // A real Stripe idempotency key returns the SAME session object for
+    // a repeated call with the same key — simulated here directly,
+    // since checkout-attempts.ts (not this test) is what discovers the
+    // pending, no-session-id-recorded row and decides to resume.
+    const createSession = vi
+      .fn()
+      .mockResolvedValue({ id: 'cs_1', url: 'https://checkout.stripe.com/x' });
+    getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
+
+    const first = await startCheckout('biz-1');
+
+    // Retry: claimCheckoutAttempt (real module, mocked here) is what
+    // would discover the still-unrecorded attempt and return `resume`
+    // with the SAME attemptId — recording succeeds this time.
+    claimCheckoutAttempt.mockResolvedValueOnce({
+      kind: 'resume',
+      attemptId: 'attempt-1',
+      generation: 1,
+      expiresAt: TEST_EXPIRES_AT
+    });
+    recordCheckoutSession.mockResolvedValueOnce({ ok: true });
+
+    const second = await startCheckout('biz-1');
+
+    expect(first).toEqual({ status: 'ok', url: 'https://checkout.stripe.com/x' });
+    expect(second).toEqual({ status: 'ok', url: 'https://checkout.stripe.com/x' });
+    // Same idempotency key both times — never a freshly-minted one.
+    const keys = createSession.mock.calls.map((call) => call[1].idempotencyKey);
+    expect(keys).toEqual(['attempt-1', 'attempt-1']);
   });
 });
 
@@ -366,7 +520,7 @@ describe('startCheckout — one free trial per business', () => {
     getStripeClient.mockReturnValue({ checkout: { sessions: { create: createSession } } });
 
     // First call wins the claim and creates the (trial) session.
-    claimCheckoutAttempt.mockResolvedValueOnce({ kind: 'new', attemptId: 'attempt-1' });
+    claimCheckoutAttempt.mockResolvedValueOnce(newClaim());
     await startCheckout('biz-1');
 
     // A concurrent/retried call reuses that same session instead of
@@ -414,8 +568,14 @@ describe('startCheckout — session configuration', () => {
     await startCheckout('biz-verified');
 
     const callArgs = createSession.mock.calls[0][0];
-    expect(callArgs.metadata).toEqual({ business_id: 'biz-verified' });
-    expect(callArgs.subscription_data.metadata).toEqual({ business_id: 'biz-verified' });
+    expect(callArgs.metadata).toEqual({
+      business_id: 'biz-verified',
+      billing_generation: String(newClaim().generation)
+    });
+    expect(callArgs.subscription_data.metadata).toEqual({
+      business_id: 'biz-verified',
+      billing_generation: String(newClaim().generation)
+    });
   });
 
   it('builds success/cancel URLs from NEXT_PUBLIC_SITE_URL only — never a request Host header (this function never even receives a Request)', async () => {

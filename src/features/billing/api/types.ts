@@ -44,6 +44,8 @@ export type BillingStatusResult =
 export type StartCheckoutResult =
   | { status: 'not_configured' }
   | { status: 'already_subscribed' }
+  /** A Checkout Session already completed at Stripe, but its subscription hasn't finished synchronizing yet — never a second Checkout; the billing page will pick up the confirmed subscription once a webhook (or a later status refetch) catches up. */
+  | { status: 'processing' }
   | { status: 'error'; error: string }
   | { status: 'ok'; url: string };
 

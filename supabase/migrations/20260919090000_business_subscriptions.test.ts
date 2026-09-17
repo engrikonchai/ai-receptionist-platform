@@ -30,7 +30,7 @@ describe('business_subscriptions migration — static contract', () => {
     );
   });
 
-  it('includes every required column, including the v1.1 ordering/trial/derived columns', () => {
+  it('includes every required column, including the v1.1/v1.2 ordering/trial/derived columns', () => {
     const tableStart = sql.indexOf('create table if not exists public.business_subscriptions');
     const tableEnd = sql.indexOf(');', tableStart);
     const columnsSql = sql.slice(tableStart, tableEnd);
@@ -41,6 +41,7 @@ describe('business_subscriptions migration — static contract', () => {
       'stripe_customer_id',
       'stripe_subscription_id',
       'stripe_subscription_created_at',
+      'billing_generation',
       'stripe_price_id',
       'status',
       'trial_start',
@@ -64,12 +65,18 @@ describe('business_subscriptions migration — static contract', () => {
     );
   });
 
-  it('adds the new ordering/trial columns idempotently for anyone who already ran the pre-correction shape', () => {
+  it('adds every v1.1/v1.2 column idempotently, including the generated has_stripe_customer, for anyone who already ran an earlier shape of this table', () => {
     expect(sql).toMatch(
       /alter table public\.business_subscriptions\s+add column if not exists stripe_subscription_created_at timestamptz;/
     );
     expect(sql).toMatch(
+      /alter table public\.business_subscriptions\s+add column if not exists billing_generation bigint;/
+    );
+    expect(sql).toMatch(
       /alter table public\.business_subscriptions\s+add column if not exists trial_used_at timestamptz;/
+    );
+    expect(sql).toMatch(
+      /alter table public\.business_subscriptions\s+add column if not exists has_stripe_customer boolean generated always as \(stripe_customer_id is not null\) stored;/
     );
   });
 
@@ -132,10 +139,11 @@ describe('business_subscriptions migration — static contract', () => {
     expect(grantMatch).not.toBeNull();
     const grantedColumns = grantMatch![1];
 
-    // Never these three — the actual fix for the column-exposure bug.
+    // Never these four — the actual fix for the column-exposure bug.
     expect(grantedColumns).not.toMatch(/\bstripe_customer_id\b/);
     expect(grantedColumns).not.toMatch(/\bstripe_subscription_id\b/);
     expect(grantedColumns).not.toMatch(/\bstripe_subscription_created_at\b/);
+    expect(grantedColumns).not.toMatch(/\bbilling_generation\b/);
 
     // But still enough to render the billing page.
     for (const column of [
@@ -157,6 +165,22 @@ describe('business_subscriptions migration — static contract', () => {
     expect(sql).not.toMatch(/grant select on public\.business_subscriptions to authenticated;/);
   });
 
+  it('revokes ALL of public, anon, AND authenticated from business_subscriptions before granting the narrow column-level SELECT — v1.2 fix', () => {
+    expect(sql).toMatch(
+      /revoke all on public\.business_subscriptions from public, anon, authenticated;/
+    );
+
+    const revokeIndex = sql.indexOf(
+      'revoke all on public.business_subscriptions from public, anon, authenticated;'
+    );
+    const grantIndex = sql.indexOf(
+      'grant select (',
+      sql.indexOf('create table if not exists public.business_subscriptions')
+    );
+    expect(revokeIndex).toBeGreaterThan(-1);
+    expect(grantIndex).toBeGreaterThan(revokeIndex);
+  });
+
   it('scopes the owner SELECT policy through businesses.owner_id, the same join every other owner-scoped table uses', () => {
     const policyStart = sql.indexOf('create policy "business_subscriptions_select_own"');
     const policyEnd = sql.indexOf(';', policyStart);
@@ -167,30 +191,73 @@ describe('business_subscriptions migration — static contract', () => {
     expect(policyBody).toMatch(/b\.owner_id = auth\.uid\(\)/);
   });
 
-  it('defines sync_business_subscription as the single atomic write path, guarded against stale-subscription overwrites', () => {
+  it('defines sync_business_subscription with a deterministic, generation-based ordering guard (v1.2) and a second-precision fallback only when neither side has a generation', () => {
     const fnMatch = sql.match(
       /create or replace function public\.sync_business_subscription\(([\s\S]*?)\)\s*\nreturns void/
     );
     expect(fnMatch).not.toBeNull();
+    expect(fnMatch![1]).toContain('p_billing_generation bigint');
 
     const fnBody = sql.slice(
       sql.indexOf('create or replace function public.sync_business_subscription'),
       sql.indexOf('revoke all on function public.sync_business_subscription')
     );
 
-    // Single statement: an upsert, not a separate select-then-write.
+    // A real upsert, not a separate select-then-write.
     expect(fnBody).toMatch(/on conflict \(business_id\) do update set/);
     expect(fnBody).not.toMatch(/\bselect\b[\s\S]*\binto\b/i);
 
-    // The ordering guard itself.
+    // Same-subscription in-place updates always apply.
     expect(fnBody).toMatch(
       /business_subscriptions\.stripe_subscription_id = excluded\.stripe_subscription_id/
     );
+
+    // Primary ordering key: a strictly-greater billing_generation wins —
+    // never a lexical comparison of Stripe ids.
     expect(fnBody).toMatch(
+      /excluded\.billing_generation > business_subscriptions\.billing_generation/
+    );
+    expect(fnBody).not.toMatch(/stripe_subscription_id\s*[<>]/);
+
+    // The Stripe-timestamp comparison survives only as an explicitly
+    // gated fallback for rows with no generation on either side.
+    const timestampFallback = fnBody.match(
+      /excluded\.billing_generation is null\s*\n\s*and business_subscriptions\.billing_generation is null\s*\n\s*and \(([\s\S]*?)\)\s*\n\s*\);/
+    );
+    expect(timestampFallback).not.toBeNull();
+    expect(timestampFallback![1]).toMatch(
       /excluded\.stripe_subscription_created_at >= business_subscriptions\.stripe_subscription_created_at/
     );
 
-    // trial_used_at is coalesced (immutable-once-set), never blindly overwritten.
+    // billing_generation itself is copied through on every write.
+    expect(fnBody).toMatch(/billing_generation = excluded\.billing_generation/);
+  });
+
+  it('records trial usage in its own unconditional statement, independent of the subscription-ordering guard (v1.2 fix)', () => {
+    const fnBody = sql.slice(
+      sql.indexOf('create or replace function public.sync_business_subscription'),
+      sql.indexOf('revoke all on function public.sync_business_subscription')
+    );
+
+    // Statement 1: an unconditional update, gated only by "not already
+    // set" and "this call actually represents a real trial" — no
+    // ordering/generation condition at all, so a stale/rejected
+    // subscription event still permanently records trial usage.
+    const trialStatementMatch = fnBody.match(
+      /update public\.business_subscriptions\s*\n\s*set trial_used_at = now\(\), updated_at = now\(\)\s*\n\s*where business_id = p_business_id\s*\n\s*and trial_used_at is null\s*\n\s*and p_trial_start is not null;/
+    );
+    expect(trialStatementMatch).not.toBeNull();
+
+    // It comes before the guarded insert/upsert (statement 2), and
+    // contains no ordering/generation condition of its own.
+    const insertIndex = fnBody.indexOf('insert into public.business_subscriptions');
+    expect(trialStatementMatch!.index).toBeLessThan(insertIndex);
+    expect(trialStatementMatch![0]).not.toMatch(/billing_generation/);
+    expect(trialStatementMatch![0]).not.toMatch(/stripe_subscription_created_at/);
+
+    // trial_used_at can only ever move from null to non-null — the
+    // guarded upsert's own coalesce (statement 2) is the second,
+    // consistent half of that same immutability guarantee.
     expect(fnBody).toMatch(
       /trial_used_at = coalesce\(business_subscriptions\.trial_used_at, excluded\.trial_used_at\)/
     );
@@ -211,6 +278,23 @@ describe('business_subscriptions migration — static contract', () => {
     expect(sql).toMatch(/create table if not exists public\.billing_checkout_attempts/);
     expect(sql).toMatch(
       /create unique index if not exists billing_checkout_attempts_one_pending_per_business\s*\n\s*on public\.billing_checkout_attempts \(business_id\)\s*\n\s*where \(status = 'pending'\);/
+    );
+  });
+
+  it('gives billing_checkout_attempts a strictly monotonic generation identity column (v1.2, item 4) — added idempotently too', () => {
+    const tableStart = sql.indexOf('create table if not exists public.billing_checkout_attempts');
+    const tableEnd = sql.indexOf(');', tableStart);
+    const columnsSql = sql.slice(tableStart, tableEnd);
+
+    expect(columnsSql).toMatch(/generation bigint generated always as identity/);
+    expect(sql).toMatch(
+      /alter table public\.billing_checkout_attempts\s+add column if not exists generation bigint generated always as identity;/
+    );
+  });
+
+  it("gives billing_checkout_attempts a 31-minute default expires_at — one minute above Stripe Checkout Session's own 30-minute minimum (v1.2, item 1)", () => {
+    expect(sql).toMatch(
+      /expires_at timestamptz not null default \(now\(\) \+ interval '31 minutes'\)/
     );
   });
 

@@ -22,11 +22,17 @@ const SYNC_RPC = 'sync_business_subscription';
  * decide whether to write." Passing `subscription.created` on every
  * call is what makes that guard possible.
  *
- * `subscription.metadata.business_id` is trusted because this app
- * itself is the only party that ever sets it (at Checkout Session
- * creation — see startCheckout() in src/features/billing/api/service.ts)
- * — Stripe merely echoes it back unmodified. A webhook payload can
- * never inject or override it.
+ * `subscription.metadata.business_id`/`billing_generation` are trusted
+ * because this app itself is the only party that ever sets them (at
+ * Checkout Session creation — see startCheckout() in
+ * src/features/billing/api/service.ts) — Stripe merely echoes them back
+ * unmodified. A webhook payload can never inject or override them.
+ * `billing_generation` (a strictly monotonic integer copied from the
+ * claimed `billing_checkout_attempts` row) is the PRIMARY deterministic
+ * ordering key `sync_business_subscription` uses — Stripe's own
+ * `created` timestamp is only a fallback for subscriptions that predate
+ * this column, since two different subscriptions can share the same
+ * one-second timestamp but never the same generation.
  *
  * `current_period_start`/`current_period_end` live on the
  * subscription's first item, not the subscription object itself, as of
@@ -51,12 +57,14 @@ export async function syncSubscriptionFromStripe(
     typeof subscription.customer === 'string' ? subscription.customer : subscription.customer.id;
   const item = subscription.items.data[0];
   const priceId = item?.price?.id ?? null;
+  const billingGeneration = parseBillingGeneration(subscription.metadata?.billing_generation);
 
   const { error } = await supabase.rpc(SYNC_RPC, {
     p_business_id: businessId,
     p_stripe_customer_id: customerId,
     p_stripe_subscription_id: subscription.id,
     p_stripe_subscription_created_at: unixToIso(subscription.created),
+    p_billing_generation: billingGeneration,
     p_stripe_price_id: priceId,
     p_status: subscription.status as BusinessSubscriptionStatus,
     p_trial_start: unixToIso(subscription.trial_start),
@@ -73,4 +81,11 @@ export async function syncSubscriptionFromStripe(
 
 function unixToIso(seconds: number | null | undefined): string | null {
   return typeof seconds === 'number' ? new Date(seconds * 1000).toISOString() : null;
+}
+
+/** Stripe metadata values are always strings — parses the generation back to an integer, or null for a subscription with none (predates this column, or wasn't created through startCheckout()). */
+function parseBillingGeneration(value: string | undefined): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
 }

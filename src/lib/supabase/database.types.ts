@@ -226,17 +226,20 @@ export type BusinessSubscriptionStatus =
  *
  * `authenticated` can only SELECT a subset of these columns (see the
  * migration's column-level grant) — stripe_customer_id,
- * stripe_subscription_id, and stripe_subscription_created_at are never
- * readable through that role; only service-role code (always gated by
- * verifyActiveBusiness()) reads them.
+ * stripe_subscription_id, stripe_subscription_created_at, and
+ * billing_generation are never readable through that role; only
+ * service-role code (always gated by verifyActiveBusiness()) reads
+ * them.
  */
 export interface BusinessSubscriptionRow {
   id: string;
   business_id: string;
   stripe_customer_id: string | null;
   stripe_subscription_id: string | null;
-  /** Stripe's own `subscription.created` — the durable ordering key sync_business_subscription() uses to refuse a delayed webhook from an older, superseded subscription. Not readable by `authenticated`. */
+  /** Stripe's own `subscription.created` — a second-precision fallback ordering key, used by sync_business_subscription() only when neither side has a billing_generation. Not readable by `authenticated`. */
   stripe_subscription_created_at: string | null;
+  /** The billing_checkout_attempts.generation that produced this subscription — the primary, deterministic ordering key (no two attempts ever share one, unlike a Stripe timestamp). Null for a subscription that predates this column. Not readable by `authenticated`. */
+  billing_generation: number | null;
   stripe_price_id: string | null;
   status: BusinessSubscriptionStatus;
   trial_start: string | null;
@@ -264,9 +267,12 @@ export interface BusinessSubscriptionRow {
 export interface BillingCheckoutAttemptRow {
   id: string;
   business_id: string;
+  /** Strictly monotonic identity column — the deterministic ordering key copied onto business_subscriptions.billing_generation via Stripe subscription metadata. No two attempts ever share one. */
+  generation: number;
   status: 'pending' | 'completed' | 'expired' | 'abandoned';
   stripe_checkout_session_id: string | null;
   created_at: string;
+  /** The single authoritative expiration for this attempt — mirrored verbatim into the Stripe Checkout Session's own expires_at at creation. */
   expires_at: string;
 }
 

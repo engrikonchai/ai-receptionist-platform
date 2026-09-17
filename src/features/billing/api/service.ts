@@ -136,18 +136,26 @@ export async function fetchBillingStatus(businessId: string): Promise<BillingSta
  * trusts to resolve which business a subscription belongs to (see
  * src/lib/stripe/sync.ts).
  *
- * Three layers of protection against a duplicate/racing Checkout:
+ * Layers of protection against a duplicate/racing Checkout:
  *   1. Refuses outright when the business already has active or
  *      trialing access (business_subscriptions.status).
  *   2. `claimCheckoutAttempt()` — a durable, database-enforced claim on
  *      `billing_checkout_attempts` that closes the race window before
- *      the webhook ever writes a subscription row (see that module's
- *      own doc comment). Two simultaneous calls converge on exactly one
+ *      the webhook ever writes a subscription row, and that checks the
+ *      recorded Stripe Session's own status before ever deciding an
+ *      attempt is reusable, resumable, or dead (see that module's own
+ *      doc comment). Two simultaneous calls converge on exactly one
  *      Stripe Checkout Session.
- *   3. The claimed attempt's id is passed to Stripe as
- *      `checkout.sessions.create`'s own idempotency key, so even a
- *      literal HTTP-level retry of the same claimed attempt can never
- *      create two Stripe-side sessions.
+ *   3. The claimed (or resumed) attempt's id is passed to Stripe as
+ *      `checkout.sessions.create`'s own idempotency key — the SAME key
+ *      every time for a given attempt, including on a recovery retry
+ *      after this function's own DB write (`recordCheckoutSession()`)
+ *      failed — so even a literal HTTP-level retry can never create two
+ *      Stripe-side sessions.
+ *   4. The claimed attempt's `expiresAt` is passed verbatim as the
+ *      Checkout Session's own `expires_at`, so the database attempt and
+ *      the live Stripe Session always expire together (see
+ *      checkout-attempts.ts).
  *
  * Reuses an existing Stripe customer when this business already has one
  * on file (from a previous subscription, even a canceled one) so a
@@ -157,11 +165,18 @@ export async function fetchBillingStatus(businessId: string): Promise<BillingSta
  * for this business — canceling and resubscribing, a subscription-id
  * change, a stale/duplicate webhook, or a concurrent Checkout attempt
  * can never grant a second trial (see the `sync_business_subscription`
- * Postgres function's own coalesce guard for the durable, immutable
- * half of this guarantee). An abandoned Checkout Session — one where
- * this trial-eligible session was created but never completed — does
- * NOT consume the trial: `trial_used_at` is set only by the webhook's
- * subscription sync, which never runs for a session nobody completed.
+ * Postgres function's own independent, immutable trial-usage tracking).
+ * An abandoned Checkout Session — one where this trial-eligible session
+ * was created but never completed — does NOT consume the trial:
+ * `trial_used_at` is set only by the webhook's subscription sync, which
+ * never runs for a session nobody completed.
+ *
+ * The claimed attempt's `generation` (a strictly monotonic integer, see
+ * checkout-attempts.ts) is embedded as trusted subscription metadata —
+ * the deterministic ordering key `sync_business_subscription` uses to
+ * decide whether an incoming webhook may replace the current
+ * subscription, immune to two different subscriptions ever sharing the
+ * same one-second Stripe timestamp.
  *
  * Reads/writes `business_subscriptions`' Stripe-identifier columns and
  * `billing_checkout_attempts` via the service-role key — the documented
@@ -194,12 +209,19 @@ export async function startCheckout(businessId: string): Promise<StartCheckoutRe
   }
 
   const claim = await claimCheckoutAttempt(service, stripe, verifiedId);
-  if (claim.kind === 'retry') {
-    return { status: 'error', error: GENERIC_BILLING_ERROR };
+  switch (claim.kind) {
+    case 'retry':
+      return { status: 'error', error: GENERIC_BILLING_ERROR };
+    case 'reuse':
+      return { status: 'ok', url: claim.url };
+    case 'already_subscribed':
+      return { status: 'already_subscribed' };
+    case 'processing':
+      return { status: 'processing' };
   }
-  if (claim.kind === 'reuse') {
-    return { status: 'ok', url: claim.url };
-  }
+  // claim.kind is now narrowed to 'new' | 'resume' — both create/resume
+  // a Checkout Session the same way, using the SAME attemptId as
+  // Stripe's idempotency key either way.
 
   const siteUrl = getSiteUrl();
   const eligibleForTrial = !existing?.trial_used_at;
@@ -208,13 +230,14 @@ export async function startCheckout(businessId: string): Promise<StartCheckoutRe
     const session = await stripe.checkout.sessions.create(
       {
         mode: 'subscription',
+        expires_at: Math.floor(claim.expiresAt.getTime() / 1000),
         line_items: [{ price: priceId, quantity: 1 }],
         customer: existing?.stripe_customer_id ?? undefined,
         subscription_data: {
           ...(eligibleForTrial ? { trial_period_days: TRIAL_PERIOD_DAYS } : {}),
-          metadata: { business_id: verifiedId }
+          metadata: { business_id: verifiedId, billing_generation: String(claim.generation) }
         },
-        metadata: { business_id: verifiedId },
+        metadata: { business_id: verifiedId, billing_generation: String(claim.generation) },
         success_url: `${siteUrl}${BILLING_PATH_QUERY('success')}`,
         cancel_url: `${siteUrl}${BILLING_PATH_QUERY('canceled')}`
       },
@@ -223,6 +246,12 @@ export async function startCheckout(businessId: string): Promise<StartCheckoutRe
 
     if (!session.url) return { status: 'error', error: GENERIC_BILLING_ERROR };
 
+    // The session is valid and usable regardless of whether this write
+    // succeeds — recordCheckoutSession()'s typed result exists so a
+    // FUTURE startCheckout() call (this one's own retry, or a second
+    // tab) can tell the DB never durably recorded it and safely resume
+    // with this SAME attemptId/idempotency key rather than assuming a
+    // fresh attempt is needed. See checkout-attempts.ts.
     await recordCheckoutSession(service, claim.attemptId, session.id);
     return { status: 'ok', url: session.url };
   } catch {

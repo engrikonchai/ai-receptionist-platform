@@ -150,6 +150,7 @@ async function processEvent(
 
       if (subscriptionId) {
         await syncOrThrow(supabase, stripe, subscriptionId);
+        await markCheckoutAttemptCompleted(supabase, session.id);
       }
       return;
     }
@@ -200,5 +201,28 @@ async function syncOrThrow(
   const result = await syncSubscriptionFromStripe(supabase, stripe, subscriptionId);
   if (!result.ok) {
     throw new Error(result.reason);
+  }
+}
+
+/**
+ * Best-effort: marks the `billing_checkout_attempts` row this Checkout
+ * Session belongs to as 'completed', so a future `claimCheckoutAttempt()`
+ * never mistakes it for still-pending. Never throws — a failure here
+ * must not turn an already-successfully-synced subscription into a
+ * reprocessed webhook (`claimCheckoutAttempt()` also marks this same row
+ * 'completed' itself the next time anyone claims for this business, so
+ * this update is redundant, never load-bearing).
+ */
+async function markCheckoutAttemptCompleted(
+  supabase: SupabaseClient,
+  stripeCheckoutSessionId: string
+): Promise<void> {
+  try {
+    await supabase
+      .from('billing_checkout_attempts')
+      .update({ status: 'completed' })
+      .eq('stripe_checkout_session_id', stripeCheckoutSessionId);
+  } catch {
+    // Intentionally swallowed — see doc comment above.
   }
 }

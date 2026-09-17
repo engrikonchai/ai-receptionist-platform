@@ -242,10 +242,22 @@ describe('POST /api/stripe/webhook — fail-closed ledger error handling', () =>
 
 describe('POST /api/stripe/webhook — invalid completed checkout is never acknowledged', () => {
   function setUpNewEvent() {
-    const from = vi
-      .fn()
-      .mockReturnValueOnce(chainable({ data: null, error: null }))
-      .mockReturnValueOnce(chainable({ error: null }));
+    // Table-aware, not call-order-based: a checkout.session.completed
+    // event also calls `.from('billing_checkout_attempts')` (to mark the
+    // attempt completed) BETWEEN the duplicate check and the ledger
+    // insert, both of which are `.from('stripe_webhook_events')` — this
+    // must not shift which canned response either of those two calls
+    // gets.
+    let stripeWebhookEventsCalls = 0;
+    const from = vi.fn((table: string) => {
+      if (table === 'billing_checkout_attempts') {
+        return { update: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+      }
+      stripeWebhookEventsCalls += 1;
+      return stripeWebhookEventsCalls === 1
+        ? chainable({ data: null, error: null }) // duplicate check
+        : chainable({ error: null }); // ledger insert
+    });
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
     syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
     return from;
@@ -304,12 +316,74 @@ describe('POST /api/stripe/webhook — invalid completed checkout is never ackno
   });
 });
 
-describe('POST /api/stripe/webhook — event synchronization', () => {
-  function setUpNewEvent() {
+describe('POST /api/stripe/webhook — checkout attempt completion', () => {
+  it('marks the billing_checkout_attempts row completed after a successful checkout.session.completed sync', async () => {
+    const attemptUpdateEq = vi.fn().mockResolvedValue({ error: null });
+    const attemptUpdate = vi.fn().mockReturnValue({ eq: attemptUpdateEq });
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: null, error: null })) // duplicate check
+      .mockReturnValueOnce({ update: attemptUpdate }) // billing_checkout_attempts completion
+      .mockReturnValueOnce(chainable({ error: null })); // ledger insert
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({
+        type: 'checkout.session.completed',
+        data: { object: { id: 'cs_test_1', mode: 'subscription', subscription: 'sub_42' } }
+      })
+    );
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(200);
+    expect(from).toHaveBeenNthCalledWith(2, 'billing_checkout_attempts');
+    expect(attemptUpdate).toHaveBeenCalledWith({ status: 'completed' });
+    expect(attemptUpdateEq).toHaveBeenCalledWith('stripe_checkout_session_id', 'cs_test_1');
+  });
+
+  it('does not fail the whole request when marking the checkout attempt completed itself fails', async () => {
+    const attemptUpdate = vi.fn().mockImplementation(() => {
+      throw new Error('unexpected db error');
+    });
     const from = vi
       .fn()
       .mockReturnValueOnce(chainable({ data: null, error: null }))
+      .mockReturnValueOnce({ update: attemptUpdate })
       .mockReturnValueOnce(chainable({ error: null }));
+    createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
+    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
+    constructEventAsync.mockResolvedValue(
+      fakeEvent({
+        type: 'checkout.session.completed',
+        data: { object: { id: 'cs_test_1', mode: 'subscription', subscription: 'sub_42' } }
+      })
+    );
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(200);
+  });
+});
+
+describe('POST /api/stripe/webhook — event synchronization', () => {
+  function setUpNewEvent() {
+    // Table-aware, not call-order-based: a checkout.session.completed
+    // event also calls `.from('billing_checkout_attempts')` (to mark the
+    // attempt completed) BETWEEN the duplicate check and the ledger
+    // insert, both of which are `.from('stripe_webhook_events')` — this
+    // must not shift which canned response either of those two calls
+    // gets.
+    let stripeWebhookEventsCalls = 0;
+    const from = vi.fn((table: string) => {
+      if (table === 'billing_checkout_attempts') {
+        return { update: () => ({ eq: () => Promise.resolve({ error: null }) }) };
+      }
+      stripeWebhookEventsCalls += 1;
+      return stripeWebhookEventsCalls === 1
+        ? chainable({ data: null, error: null }) // duplicate check
+        : chainable({ error: null }); // ledger insert
+    });
     createSupabaseServiceRoleClient.mockReturnValue(mockClient(from));
     syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
     return from;

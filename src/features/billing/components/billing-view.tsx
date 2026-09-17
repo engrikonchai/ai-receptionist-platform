@@ -73,6 +73,13 @@ export function BillingView({ businessId }: { businessId: string }) {
           toast.error(ALREADY_SUBSCRIBED_MESSAGE);
           return;
         }
+        if (result.status === 'processing') {
+          toast.success(
+            'Your subscription is already being finalized — this page will update automatically.'
+          );
+          void refetch();
+          return;
+        }
         if (result.status === 'not_configured') {
           toast.error('Billing is not configured yet.');
           return;
