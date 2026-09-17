@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { useQueryState } from 'nuqs';
+import { CheckoutEventNames, initializePaddle, type Paddle } from '@paddle/paddle-js';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -25,12 +25,12 @@ import {
 } from '../api/queries';
 import {
   ALREADY_SUBSCRIBED_MESSAGE,
-  NO_STRIPE_CUSTOMER_MESSAGE,
+  NO_PADDLE_CUSTOMER_MESSAGE,
   SESSION_EXPIRED_MESSAGE
 } from '../api/types';
 import { formatDate, formatMoney, SUBSCRIPTION_STATUS_LABEL } from '../utils/format';
 
-const PAYMENT_PROBLEM_STATUSES = new Set(['past_due', 'unpaid']);
+const PAYMENT_PROBLEM_STATUSES = new Set(['past_due']);
 
 function BillingSkeleton() {
   return (
@@ -52,21 +52,53 @@ export function BillingView({ businessId }: { businessId: string }) {
   const checkoutMutation = useMutation(startCheckoutMutation(businessId));
   const portalMutation = useMutation(openCustomerPortalMutation(businessId));
 
-  const [checkoutParam, setCheckoutParam] = useQueryState('checkout');
-  const [dismissedBanner, setDismissedBanner] = useState<'success' | 'canceled' | null>(null);
+  const [paddleInstance, setPaddleInstance] = useState<Paddle | null>(null);
+  const [checkoutCompleted, setCheckoutCompleted] = useState(false);
+  const environment = data?.status === 'ok' ? data.environment : null;
 
+  // Paddle.js loads and opens the Checkout overlay entirely client-side
+  // — the client token is deliberately public (see env.example.txt) and
+  // can only ever open a checkout, never read or write account data.
+  // The environment ('sandbox' here) comes from the server's own
+  // validated PADDLE_ENVIRONMENT (src/lib/paddle/client.ts), never
+  // guessed or hardcoded client-side.
   useEffect(() => {
-    if (checkoutParam === 'success' || checkoutParam === 'canceled') {
-      setDismissedBanner(checkoutParam);
-      void setCheckoutParam(null);
-    }
-  }, [checkoutParam, setCheckoutParam]);
+    if (!environment) return;
+    const token = process.env.NEXT_PUBLIC_PADDLE_CLIENT_TOKEN;
+    if (!token) return;
+
+    let cancelled = false;
+    void initializePaddle({
+      token,
+      environment,
+      eventCallback: (event) => {
+        // Purely a UX signal — never what grants subscription access.
+        // The webhook handler (src/app/api/paddle/webhook/route.ts) is
+        // the only authoritative source of truth; this just lets the
+        // page show an immediate "thanks" and refetch the real status.
+        if (event.name === CheckoutEventNames.CHECKOUT_COMPLETED) {
+          setCheckoutCompleted(true);
+          void refetch();
+        }
+      }
+    }).then((instance) => {
+      if (!cancelled) setPaddleInstance(instance ?? null);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [environment, refetch]);
 
   function handleStartCheckout() {
     checkoutMutation.mutate(undefined, {
       onSuccess: (result) => {
         if (result.status === 'ok') {
-          window.location.href = result.url;
+          if (!paddleInstance) {
+            toast.error('Checkout is still loading. Please try again in a moment.');
+            return;
+          }
+          paddleInstance.Checkout.open({ transactionId: result.transactionId });
           return;
         }
         if (result.status === 'already_subscribed') {
@@ -98,7 +130,7 @@ export function BillingView({ businessId }: { businessId: string }) {
           return;
         }
         if (result.status === 'no_customer') {
-          toast.error(NO_STRIPE_CUSTOMER_MESSAGE);
+          toast.error(NO_PADDLE_CUSTOMER_MESSAGE);
           return;
         }
         if (result.status === 'not_configured') {
@@ -150,7 +182,7 @@ export function BillingView({ businessId }: { businessId: string }) {
         </EmptyMedia>
         <EmptyTitle>Billing isn&apos;t set up yet</EmptyTitle>
         <EmptyDescription>
-          Stripe hasn&apos;t been configured for this environment yet. Contact support if you
+          Paddle hasn&apos;t been configured for this environment yet. Contact support if you
           expected billing to be available.
         </EmptyDescription>
       </Empty>
@@ -164,21 +196,14 @@ export function BillingView({ businessId }: { businessId: string }) {
 
   return (
     <div className='space-y-4'>
-      {dismissedBanner === 'success' && (
+      {checkoutCompleted && (
         <Alert>
           <Icons.toastSuccess aria-hidden='true' />
           <AlertTitle>Checkout complete</AlertTitle>
           <AlertDescription>
             Thanks — your subscription is being set up. This page will update automatically once
-            Stripe confirms it.
+            Paddle confirms it.
           </AlertDescription>
-        </Alert>
-      )}
-      {dismissedBanner === 'canceled' && (
-        <Alert variant='destructive'>
-          <Icons.alertCircle aria-hidden='true' />
-          <AlertTitle>Checkout canceled</AlertTitle>
-          <AlertDescription>No changes were made. You can start again any time.</AlertDescription>
         </Alert>
       )}
 
@@ -195,7 +220,14 @@ export function BillingView({ businessId }: { businessId: string }) {
 
       <Card>
         <CardHeader className='flex flex-row items-center justify-between gap-2'>
-          <CardTitle>{plan?.productName ?? 'Subscription'}</CardTitle>
+          <div className='flex flex-wrap items-center gap-2'>
+            <CardTitle>{plan?.productName ?? 'Subscription'}</CardTitle>
+            {data.environment === 'sandbox' && (
+              <Badge variant='secondary' aria-label='Paddle Sandbox / Test Mode'>
+                Sandbox / Test Mode
+              </Badge>
+            )}
+          </div>
           {subscription && (
             <Badge variant={hasPaymentProblem ? 'destructive' : 'outline'}>
               {SUBSCRIPTION_STATUS_LABEL[subscription.status]}
@@ -215,7 +247,7 @@ export function BillingView({ businessId }: { businessId: string }) {
 
           {!subscription && (
             <p className='text-muted-foreground text-sm'>
-              Start a 14-day free trial — no charge until the trial ends.
+              Start your subscription — a free trial may apply, decided automatically by Paddle.
             </p>
           )}
 
@@ -245,10 +277,10 @@ export function BillingView({ businessId }: { businessId: string }) {
                 onClick={handleStartCheckout}
                 disabled={checkoutMutation.isPending}
               >
-                {checkoutMutation.isPending ? 'Starting…' : 'Start free trial'}
+                {checkoutMutation.isPending ? 'Starting…' : 'Start subscription'}
               </Button>
             )}
-            {subscription?.hasStripeCustomer && (
+            {subscription?.hasPaddleCustomer && (
               <Button
                 type='button'
                 variant='outline'

@@ -14,7 +14,7 @@ export type VerifyBusinessResult =
 
 /**
  * The one place every billing query and action funnels through before
- * touching `business_subscriptions` or calling Stripe. Re-loads the
+ * touching `business_subscriptions` or calling Paddle. Re-loads the
  * signed-in owner's session and the businesses Row Level Security lets
  * them see (never the service-role key), then confirms the requested
  * business id is actually one of theirs — a business id is never

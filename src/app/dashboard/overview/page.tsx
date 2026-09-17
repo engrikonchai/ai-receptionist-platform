@@ -12,7 +12,7 @@ import {
   resolveActiveBusinessId
 } from '@/lib/supabase/owner-context';
 import type { BusinessSubscriptionRow, WidgetSettingsRow } from '@/lib/supabase/database.types';
-import { isStripeConfigured } from '@/lib/stripe/client';
+import { getPaddleEnvironment } from '@/lib/paddle/client';
 import { SetupChecklist } from '@/features/onboarding/components/setup-checklist';
 import { computeSetupProgress } from '@/features/onboarding/utils/setup-progress';
 import { formatDate, SUBSCRIPTION_STATUS_LABEL } from '@/features/billing/utils/format';
@@ -52,11 +52,11 @@ export default async function OverviewPage() {
   // can render as an explicit "could not load" state rather than
   // silently looking like zero — see the Leads & handoffs card below.
   // The billing summary card only queries business_subscriptions when
-  // Stripe is actually configured — an unconfigured environment (e.g.
-  // this branch's own default state before real Stripe keys are added)
+  // Paddle is actually configured — an unconfigured environment (e.g.
+  // this branch's own default state before real Paddle keys are added)
   // never surfaces a "billing unavailable" error on the one page every
   // owner sees first.
-  const stripeConfigured = isStripeConfigured();
+  const paddleConfigured = getPaddleEnvironment() !== null;
 
   const [
     { data: widgetSettingsRow },
@@ -86,7 +86,7 @@ export default async function OverviewPage() {
           .select('id', { count: 'exact', head: true })
           .eq('business_id', activeBusiness.id)
           .eq('status', 'new'),
-        stripeConfigured
+        paddleConfigured
           ? ctx.supabase
               .from('business_subscriptions')
               .select('status, trial_end, current_period_end, cancel_at_period_end')
@@ -107,8 +107,7 @@ export default async function OverviewPage() {
     BusinessSubscriptionRow,
     'status' | 'trial_end' | 'current_period_end' | 'cancel_at_period_end'
   > | null;
-  const hasPaymentProblem =
-    subscription?.status === 'past_due' || subscription?.status === 'unpaid';
+  const hasPaymentProblem = subscription?.status === 'past_due';
 
   const setupProgress = activeBusiness
     ? computeSetupProgress({
@@ -198,7 +197,7 @@ export default async function OverviewPage() {
           </Card>
         )}
 
-        {activeBusiness && stripeConfigured && (
+        {activeBusiness && paddleConfigured && (
           <Card>
             <CardContent className='space-y-2 pt-6'>
               <div className='flex items-center justify-between gap-2'>
@@ -232,7 +231,7 @@ export default async function OverviewPage() {
                 </>
               ) : (
                 <p className='text-muted-foreground text-sm'>
-                  Start your 14-day free trial to keep using the AI receptionist.
+                  Start your subscription to keep using the AI receptionist.
                 </p>
               )}
 

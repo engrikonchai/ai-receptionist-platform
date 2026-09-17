@@ -18,12 +18,12 @@
  * (supabase/migrations/20260917140000_widget_installation_confirmed.sql
  * — confirmed applied), `handoffs.client_request_id`
  * (supabase/migrations/20260918090000_handoff_idempotency.sql — NOT
- * applied yet), and the two brand-new tables
- * `business_subscriptions` / `stripe_webhook_events` /
+ * applied yet), and the three brand-new tables
+ * `business_subscriptions` / `paddle_webhook_events` /
  * `billing_checkout_attempts`, plus the `sync_business_subscription()`
  * RPC
- * (supabase/migrations/20260919090000_business_subscriptions.sql — NOT
- * applied yet) — see each file's header for why it's safe.
+ * (supabase/migrations/20260920100000_paddle_billing_foundation.sql —
+ * NOT applied yet) — see that file's header for why it's safe.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -200,33 +200,29 @@ export interface WidgetPublicConfigRpcResult {
 }
 
 /**
- * Mirrors Stripe's own subscription status values verbatim (see
- * https://stripe.com/docs/api/subscriptions/object#subscription_object-status)
+ * Mirrors Paddle's own subscription status values verbatim (see
+ * https://developer.paddle.com/api-reference/subscriptions/subscription-object)
  * rather than a parallel vocabulary — the webhook handler
- * (src/app/api/stripe/webhook/route.ts) never has to translate.
+ * (src/app/api/paddle/webhook/route.ts) never has to translate. A
+ * deliberately smaller set than a card-processor-style status enum:
+ * Paddle only ever creates a subscription once its first transaction
+ * has actually progressed, so there is no "incomplete" equivalent.
  */
-export type BusinessSubscriptionStatus =
-  | 'incomplete'
-  | 'incomplete_expired'
-  | 'trialing'
-  | 'active'
-  | 'past_due'
-  | 'canceled'
-  | 'unpaid'
-  | 'paused';
+export type BusinessSubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'canceled';
 
 /**
- * One row per business's Stripe subscription lifecycle — see
- * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * One row per business's Paddle subscription lifecycle — see
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
  * applied yet). Written only by the service-role key: the verified
- * Stripe webhook handler via the sync_business_subscription() RPC, and
+ * Paddle webhook handler via the sync_business_subscription() RPC, and
  * the checkout/portal server actions' own service-role reads/writes
  * (src/features/billing/api/service.ts) — never directly by a plain
  * authenticated-client write. Row is never deleted on cancellation.
  *
  * `authenticated` can only SELECT a subset of these columns (see the
- * migration's column-level grant) — stripe_customer_id,
- * stripe_subscription_id, stripe_subscription_created_at, and
+ * migration's column-level grant) — paddle_customer_id,
+ * paddle_subscription_id, paddle_transaction_id,
+ * paddle_subscription_created_at, paddle_event_occurred_at, and
  * billing_generation are never readable through that role; only
  * service-role code (always gated by verifyActiveBusiness()) reads
  * them.
@@ -234,17 +230,21 @@ export type BusinessSubscriptionStatus =
 export interface BusinessSubscriptionRow {
   id: string;
   business_id: string;
-  stripe_customer_id: string | null;
-  stripe_subscription_id: string | null;
-  /** Stripe's own `subscription.created` — a second-precision fallback ordering key, used by sync_business_subscription() only when neither side has a billing_generation. Not readable by `authenticated`. */
-  stripe_subscription_created_at: string | null;
-  /** The billing_checkout_attempts.generation that produced this subscription — the primary, deterministic ordering key (no two attempts ever share one, unlike a Stripe timestamp). Null for a subscription that predates this column. Not readable by `authenticated`. */
+  paddle_customer_id: string | null;
+  paddle_subscription_id: string | null;
+  /** The most recently known Paddle transaction for this subscription — kept best-effort, never a stand-in for paddle_subscription_id. Not readable by `authenticated`. */
+  paddle_transaction_id: string | null;
+  /** Paddle's own subscription `created_at` — a second-precision fallback ordering key, used by sync_business_subscription() only when neither side has a billing_generation. Not readable by `authenticated`. */
+  paddle_subscription_created_at: string | null;
+  /** The `occurred_at` of the last webhook event that updated this row — guards against Paddle's own unordered delivery of events for the SAME subscription. Not readable by `authenticated`. */
+  paddle_event_occurred_at: string | null;
+  /** The billing_checkout_attempts.generation that produced this subscription — the primary, deterministic ordering key for comparing DIFFERENT subscriptions (no two attempts ever share one, unlike a Paddle timestamp). Null for a subscription that predates this column. Not readable by `authenticated`. */
   billing_generation: number | null;
-  stripe_price_id: string | null;
+  paddle_price_id: string | null;
   status: BusinessSubscriptionStatus;
   trial_start: string | null;
   trial_end: string | null;
-  /** Immutable once set — the first time a subscription with a real trial_start syncs for this business. Never cleared by a later sync, a resubscribe, or a duplicate/stale webhook. Gates whether startCheckout() may offer another 14-day trial. */
+  /** Immutable once set — the first time a subscription with a real trial period syncs for this business. Never cleared by a later sync, a resubscribe, or a duplicate/stale webhook. This app never requests or withholds a trial itself — Paddle decides trial eligibility per customer from the Price's own configuration; this column is only this app's durable record of what happened. */
   trial_used_at: string | null;
   current_period_start: string | null;
   current_period_end: string | null;
@@ -252,14 +252,15 @@ export interface BusinessSubscriptionRow {
   canceled_at: string | null;
   created_at: string;
   updated_at: string;
-  /** Generated column (`stripe_customer_id is not null`) — the only customer-related fact `authenticated` may read. */
-  has_stripe_customer: boolean;
+  /** Generated column (`paddle_customer_id is not null`) — the only customer-related fact `authenticated` may read. */
+  has_paddle_customer: boolean;
 }
 
 /**
- * Durable Checkout-creation idempotency — at most one `status='pending'`
- * row per business at a time (enforced by a unique partial index). See
- * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * Durable Checkout-creation concurrency safety — at most one
+ * `status='pending'` row per business at a time (enforced by a unique
+ * partial index). See
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
  * applied yet). Read and written only by the service-role key, from
  * src/features/billing/api/checkout-attempts.ts, always after
  * verifyActiveBusiness().
@@ -267,23 +268,23 @@ export interface BusinessSubscriptionRow {
 export interface BillingCheckoutAttemptRow {
   id: string;
   business_id: string;
-  /** Strictly monotonic identity column — the deterministic ordering key copied onto business_subscriptions.billing_generation via Stripe subscription metadata. No two attempts ever share one. */
+  /** Strictly monotonic identity column — the deterministic ordering key copied onto business_subscriptions.billing_generation via Paddle custom_data. No two attempts ever share one. */
   generation: number;
   status: 'pending' | 'completed' | 'expired' | 'abandoned';
-  stripe_checkout_session_id: string | null;
+  paddle_transaction_id: string | null;
   created_at: string;
-  /** The single authoritative expiration for this attempt — mirrored verbatim into the Stripe Checkout Session's own expires_at at creation. */
+  /** A best-effort LOCAL staleness bound only — Paddle transactions have no provider-enforced expiry of their own, so this never by itself decides an attempt is dead; see checkout-attempts.ts. */
   expires_at: string;
 }
 
 /**
- * Idempotency ledger for the Stripe webhook handler — one row per
- * successfully processed Stripe event id. See
- * supabase/migrations/20260919090000_business_subscriptions.sql (NOT
+ * Idempotency ledger for the Paddle webhook handler — one row per
+ * successfully processed Paddle event id. See
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
  * applied yet). Read and written only by the service-role key.
  */
-export interface StripeWebhookEventRow {
-  stripe_event_id: string;
+export interface PaddleWebhookEventRow {
+  paddle_event_id: string;
   event_type: string;
   processed_at: string;
   attempt_count: number;

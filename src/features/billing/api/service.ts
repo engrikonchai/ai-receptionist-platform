@@ -1,11 +1,10 @@
 'use server';
 
-import type Stripe from 'stripe';
+import type { Paddle } from '@paddle/paddle-node-sdk';
 import type { BusinessSubscriptionRow } from '@/lib/supabase/database.types';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
-import { getStripeClient, getStripePriceId, isStripeConfigured } from '@/lib/stripe/client';
-import { getSiteUrl } from '@/lib/site-url';
-import { claimCheckoutAttempt, recordCheckoutSession } from './checkout-attempts';
+import { getPaddleClient, getPaddleEnvironment, getPaddlePriceId } from '@/lib/paddle/client';
+import { claimCheckoutAttempt, recordTransactionId } from './checkout-attempts';
 import { verifyActiveBusiness } from './authorize';
 import { GENERIC_BILLING_ERROR } from './types';
 import type {
@@ -16,19 +15,14 @@ import type {
   StartCheckoutResult
 } from './types';
 
-const BILLING_PATH_QUERY = (checkout: 'success' | 'canceled') =>
-  `/dashboard/billing?checkout=${checkout}`;
-
-const TRIAL_PERIOD_DAYS = 14;
-
 /**
  * Every column `authenticated` is actually granted SELECT on (see the
  * migration's column-level grant) — deliberately excludes
- * stripe_customer_id/stripe_subscription_id. `has_stripe_customer` is a
- * generated boolean, never the real id.
+ * paddle_customer_id/paddle_subscription_id/paddle_transaction_id.
+ * `has_paddle_customer` is a generated boolean, never the real id.
  */
 const SUBSCRIPTION_DISPLAY_SELECT =
-  'status, trial_start, trial_end, current_period_start, current_period_end, cancel_at_period_end, has_stripe_customer';
+  'status, trial_start, trial_end, current_period_start, current_period_end, cancel_at_period_end, has_paddle_customer';
 
 type SubscriptionDisplayRow = Pick<
   BusinessSubscriptionRow,
@@ -38,16 +32,16 @@ type SubscriptionDisplayRow = Pick<
   | 'current_period_start'
   | 'current_period_end'
   | 'cancel_at_period_end'
-  | 'has_stripe_customer'
+  | 'has_paddle_customer'
 >;
 
-/** The Stripe-identifier fields `authenticated` can never select — read only by service-role, only from startCheckout()/openCustomerPortal(), always after verifyActiveBusiness(). See src/lib/supabase/service-role.ts for the documented exception this is. */
+/** The Paddle-identifier fields `authenticated` can never select — read only by service-role, only from startCheckout()/openCustomerPortal(), always after verifyActiveBusiness(). See src/lib/supabase/service-role.ts for the documented exception this is. */
 type SubscriptionSecretsRow = Pick<
   BusinessSubscriptionRow,
-  'status' | 'stripe_customer_id' | 'trial_used_at'
+  'status' | 'paddle_customer_id' | 'paddle_subscription_id'
 >;
 
-/** A business "has access" for the purpose of preventing a second, redundant Checkout — anything short of that (past_due, incomplete, canceled, ...) may legitimately start a new one to recover. */
+/** A business "has access" for the purpose of preventing a second, redundant Checkout — anything short of that (past_due, paused, canceled, ...) may legitimately start a new one to recover. */
 function hasActiveAccess(status: SubscriptionDisplayRow['status']): boolean {
   return status === 'active' || status === 'trialing';
 }
@@ -58,35 +52,33 @@ function toBillingSubscription(row: SubscriptionDisplayRow): BillingSubscription
     trialEnd: row.trial_end,
     currentPeriodEnd: row.current_period_end,
     cancelAtPeriodEnd: row.cancel_at_period_end,
-    hasStripeCustomer: row.has_stripe_customer
+    hasPaddleCustomer: row.has_paddle_customer
   };
 }
 
 /**
- * The current catalog price for STRIPE_PRICE_ID, fetched live from
- * Stripe every call — this app never hardcodes an amount or currency
- * into a component. Best-effort: a Stripe API failure here degrades to
+ * The current catalog price for PADDLE_PRICE_ID, fetched live from
+ * Paddle every call — this app never hardcodes an amount or currency
+ * into a component. Best-effort: a Paddle API failure here degrades to
  * `null` (the billing page still renders subscription status without
  * pricing) rather than failing the whole page load, since pricing
- * display is secondary to the owner's actual subscription state.
+ * display is secondary to the owner's actual subscription state. Any
+ * trial period is configured on this Price in the Paddle Dashboard
+ * itself — this app never requests or withholds one.
  */
-async function fetchCurrentPlan(stripe: Stripe): Promise<BillingPlan | null> {
-  const priceId = getStripePriceId();
+async function fetchCurrentPlan(paddle: Paddle): Promise<BillingPlan | null> {
+  const priceId = getPaddlePriceId();
   if (!priceId) return null;
 
   try {
-    const price = await stripe.prices.retrieve(priceId, { expand: ['product'] });
-    const product = price.product;
-    const productName =
-      typeof product === 'string' || ('deleted' in product && product.deleted)
-        ? 'Subscription'
-        : product.name;
+    const price = await paddle.prices.get(priceId, { include: ['product'] });
+    const amount = Number(price.unitPrice.amount);
 
     return {
-      productName,
-      unitAmount: price.unit_amount,
-      currency: price.currency,
-      interval: price.recurring?.interval ?? null
+      productName: price.product?.name ?? price.description,
+      unitAmount: Number.isFinite(amount) ? amount : null,
+      currency: price.unitPrice.currencyCode,
+      interval: price.billingCycle?.interval ?? null
     };
   } catch {
     return null;
@@ -94,13 +86,39 @@ async function fetchCurrentPlan(stripe: Stripe): Promise<BillingPlan | null> {
 }
 
 /**
+ * Resolves the one Paddle customer that represents this business,
+ * server-side only — "create or retrieve," per this billing feature's
+ * design. Reuses the id already on file when present; otherwise looks
+ * up an existing Paddle customer by the owner's own email (so a
+ * previously-abandoned attempt, or a retry after a failed durable
+ * write, can never accumulate a second Paddle customer for the same
+ * business) before creating a fresh one. Never lets the browser supply
+ * or influence a customer id.
+ */
+async function resolvePaddleCustomerId(
+  paddle: Paddle,
+  ownerEmail: string,
+  existingCustomerId: string | null
+): Promise<string> {
+  if (existingCustomerId) return existingCustomerId;
+
+  const matches = paddle.customers.list({ email: [ownerEmail], perPage: 1 });
+  for await (const customer of matches) {
+    return customer.id;
+  }
+
+  const created = await paddle.customers.create({ email: ownerEmail });
+  return created.id;
+}
+
+/**
  * Read-only — the billing page's own data source. Reads only the
  * columns `authenticated` is actually granted (see
  * SUBSCRIPTION_DISPLAY_SELECT) via the normal cookie-scoped, RLS-
- * enforced client — never the service-role key, and never a Stripe
- * customer/subscription id. Never writes anything;
+ * enforced client — never the service-role key, and never a Paddle
+ * customer/subscription/transaction id. Never writes anything;
  * `business_subscriptions` is written exclusively by the verified
- * Stripe webhook handler (src/app/api/stripe/webhook/route.ts) and the
+ * Paddle webhook handler (src/app/api/paddle/webhook/route.ts) and the
  * checkout/portal actions' own service-role calls in this file.
  */
 export async function fetchBillingStatus(businessId: string): Promise<BillingStatusResult> {
@@ -108,7 +126,8 @@ export async function fetchBillingStatus(businessId: string): Promise<BillingSta
   if (!verified.ok) throw new Error(verified.error);
   const { supabase, businessId: verifiedId } = verified.ctx;
 
-  if (!isStripeConfigured()) return { status: 'not_configured' };
+  const environment = getPaddleEnvironment();
+  if (!environment) return { status: 'not_configured' };
 
   const { data: row, error } = await supabase
     .from('business_subscriptions')
@@ -118,67 +137,60 @@ export async function fetchBillingStatus(businessId: string): Promise<BillingSta
 
   if (error) throw new Error(GENERIC_BILLING_ERROR);
 
-  const stripe = getStripeClient();
-  const plan = stripe ? await fetchCurrentPlan(stripe) : null;
+  const paddle = getPaddleClient();
+  const plan = paddle ? await fetchCurrentPlan(paddle) : null;
 
   return {
     status: 'ok',
     plan,
-    subscription: row ? toBillingSubscription(row as SubscriptionDisplayRow) : null
+    subscription: row ? toBillingSubscription(row as SubscriptionDisplayRow) : null,
+    environment
   };
 }
 
 /**
- * Starts a Stripe Checkout Session in subscription mode. `business_id`
- * is attached as Checkout/subscription metadata — set here, server-side,
- * from the already-verified business id, never from anything the
- * browser sent directly — which is what the webhook handler later
- * trusts to resolve which business a subscription belongs to (see
- * src/lib/stripe/sync.ts).
+ * Creates a Paddle transaction for this business's one configurable
+ * plan (`PADDLE_PRICE_ID`), returning only the transaction id the
+ * client needs to open the Paddle.js Checkout overlay
+ * (`Paddle.Checkout.open({ transactionId })`) — never a full checkout
+ * URL (Paddle's overlay flow doesn't use one) and never any other
+ * transaction detail. `business_id` is attached as trusted, server-set
+ * `custom_data` — from the already-verified business id, never from
+ * anything the browser sent directly — which is what the webhook
+ * handler later trusts to resolve which business a subscription
+ * belongs to (see src/lib/paddle/sync.ts).
  *
  * Layers of protection against a duplicate/racing Checkout:
  *   1. Refuses outright when the business already has active or
  *      trialing access (business_subscriptions.status).
  *   2. `claimCheckoutAttempt()` — a durable, database-enforced claim on
  *      `billing_checkout_attempts` that closes the race window before
- *      the webhook ever writes a subscription row, and that checks the
- *      recorded Stripe Session's own status before ever deciding an
- *      attempt is reusable, resumable, or dead (see that module's own
- *      doc comment). Two simultaneous calls converge on exactly one
- *      Stripe Checkout Session.
- *   3. The claimed (or resumed) attempt's id is passed to Stripe as
- *      `checkout.sessions.create`'s own idempotency key — the SAME key
- *      every time for a given attempt, including on a recovery retry
- *      after this function's own DB write (`recordCheckoutSession()`)
- *      failed — so even a literal HTTP-level retry can never create two
- *      Stripe-side sessions.
- *   4. The claimed attempt's `expiresAt` is passed verbatim as the
- *      Checkout Session's own `expires_at`, so the database attempt and
- *      the live Stripe Session always expire together (see
- *      checkout-attempts.ts).
+ *      the webhook ever writes a subscription row (see that module's
+ *      own doc comment). Two simultaneous calls converge on exactly one
+ *      Paddle transaction: only the winning claimer ever calls
+ *      `transactions.create()` at all — the Paddle Node SDK has no
+ *      request-level idempotency key the way some other providers'
+ *      SDKs do, so a losing/concurrent caller is told to retry shortly
+ *      rather than risk creating a second transaction.
  *
- * Reuses an existing Stripe customer when this business already has one
+ * Reuses an existing Paddle customer when this business already has one
  * on file (from a previous subscription, even a canceled one) so a
- * business never accumulates duplicate Stripe customers.
+ * business never accumulates duplicate Paddle customers.
  *
- * Grants a 14-day trial only when `trial_used_at` has never been set
- * for this business — canceling and resubscribing, a subscription-id
- * change, a stale/duplicate webhook, or a concurrent Checkout attempt
- * can never grant a second trial (see the `sync_business_subscription`
- * Postgres function's own independent, immutable trial-usage tracking).
- * An abandoned Checkout Session — one where this trial-eligible session
- * was created but never completed — does NOT consume the trial:
- * `trial_used_at` is set only by the webhook's subscription sync, which
- * never runs for a session nobody completed.
+ * This app never requests or withholds a trial itself — Paddle decides
+ * trial eligibility per customer from the Price's own configuration in
+ * the Paddle Dashboard. `trial_used_at` (recorded by the webhook's own
+ * sync, never by this function) is this app's own durable record of
+ * what happened, for display only.
  *
  * The claimed attempt's `generation` (a strictly monotonic integer, see
- * checkout-attempts.ts) is embedded as trusted subscription metadata —
- * the deterministic ordering key `sync_business_subscription` uses to
+ * checkout-attempts.ts) is embedded as trusted `custom_data` — the
+ * deterministic ordering key `sync_business_subscription` uses to
  * decide whether an incoming webhook may replace the current
  * subscription, immune to two different subscriptions ever sharing the
- * same one-second Stripe timestamp.
+ * same one-second Paddle timestamp.
  *
- * Reads/writes `business_subscriptions`' Stripe-identifier columns and
+ * Reads/writes `business_subscriptions`' Paddle-identifier columns and
  * `billing_checkout_attempts` via the service-role key — the documented
  * exception in src/lib/supabase/service-role.ts — always scoped to
  * `verifiedId`, never a caller-supplied business id.
@@ -186,18 +198,18 @@ export async function fetchBillingStatus(businessId: string): Promise<BillingSta
 export async function startCheckout(businessId: string): Promise<StartCheckoutResult> {
   const verified = await verifyActiveBusiness(businessId);
   if (!verified.ok) return { status: 'error', error: verified.error };
-  const { businessId: verifiedId } = verified.ctx;
+  const { businessId: verifiedId, user } = verified.ctx;
 
-  const stripe = getStripeClient();
-  const priceId = getStripePriceId();
-  if (!stripe || !priceId) return { status: 'not_configured' };
+  const paddle = getPaddleClient();
+  const priceId = getPaddlePriceId();
+  if (!paddle || !priceId) return { status: 'not_configured' };
 
   const service = createSupabaseServiceRoleClient();
   if (!service) return { status: 'not_configured' };
 
   const { data: row, error: loadError } = await service
     .from('business_subscriptions')
-    .select('status, stripe_customer_id, trial_used_at')
+    .select('status, paddle_customer_id, paddle_subscription_id')
     .eq('business_id', verifiedId)
     .maybeSingle();
 
@@ -208,96 +220,84 @@ export async function startCheckout(businessId: string): Promise<StartCheckoutRe
     return { status: 'already_subscribed' };
   }
 
-  const claim = await claimCheckoutAttempt(service, stripe, verifiedId);
+  if (!user.email) return { status: 'error', error: GENERIC_BILLING_ERROR };
+
+  const claim = await claimCheckoutAttempt(service, paddle, verifiedId);
   switch (claim.kind) {
     case 'retry':
       return { status: 'error', error: GENERIC_BILLING_ERROR };
     case 'reuse':
-      return { status: 'ok', url: claim.url };
+      return { status: 'ok', transactionId: claim.transactionId };
     case 'already_subscribed':
       return { status: 'already_subscribed' };
     case 'processing':
       return { status: 'processing' };
   }
-  // claim.kind is now narrowed to 'new' | 'resume' — both create/resume
-  // a Checkout Session the same way, using the SAME attemptId as
-  // Stripe's idempotency key either way.
-
-  const siteUrl = getSiteUrl();
-  const eligibleForTrial = !existing?.trial_used_at;
+  // claim.kind is now narrowed to 'new' — this call, and only this
+  // call, may create a Paddle transaction.
 
   try {
-    const session = await stripe.checkout.sessions.create(
-      {
-        mode: 'subscription',
-        expires_at: Math.floor(claim.expiresAt.getTime() / 1000),
-        line_items: [{ price: priceId, quantity: 1 }],
-        customer: existing?.stripe_customer_id ?? undefined,
-        subscription_data: {
-          ...(eligibleForTrial ? { trial_period_days: TRIAL_PERIOD_DAYS } : {}),
-          metadata: { business_id: verifiedId, billing_generation: String(claim.generation) }
-        },
-        metadata: { business_id: verifiedId, billing_generation: String(claim.generation) },
-        success_url: `${siteUrl}${BILLING_PATH_QUERY('success')}`,
-        cancel_url: `${siteUrl}${BILLING_PATH_QUERY('canceled')}`
-      },
-      { idempotencyKey: claim.attemptId }
+    const customerId = await resolvePaddleCustomerId(
+      paddle,
+      user.email,
+      existing?.paddle_customer_id ?? null
     );
 
-    if (!session.url) return { status: 'error', error: GENERIC_BILLING_ERROR };
+    const transaction = await paddle.transactions.create({
+      items: [{ priceId, quantity: 1 }],
+      customerId,
+      customData: { business_id: verifiedId, billing_generation: claim.generation }
+    });
 
-    // The session is valid and usable regardless of whether this write
-    // succeeds — recordCheckoutSession()'s typed result exists so a
-    // FUTURE startCheckout() call (this one's own retry, or a second
-    // tab) can tell the DB never durably recorded it and safely resume
-    // with this SAME attemptId/idempotency key rather than assuming a
-    // fresh attempt is needed. See checkout-attempts.ts.
-    await recordCheckoutSession(service, claim.attemptId, session.id);
-    return { status: 'ok', url: session.url };
+    // The transaction is valid and usable regardless of whether this
+    // write succeeds — recordTransactionId()'s typed result exists so a
+    // FUTURE claim (a second tab, a retry) can tell the DB never
+    // durably recorded it and report `retry` rather than falsely
+    // reusing an unrecorded id. See checkout-attempts.ts.
+    await recordTransactionId(service, claim.attemptId, transaction.id);
+    return { status: 'ok', transactionId: transaction.id };
   } catch {
     return { status: 'error', error: GENERIC_BILLING_ERROR };
   }
 }
 
 /**
- * Opens a Stripe Billing Portal session for this business's own Stripe
+ * Opens a Paddle Customer Portal session for this business's own Paddle
  * customer — never for a customer id the caller supplied, only the one
  * this server already has on file for the verified business. Reads
- * `stripe_customer_id` via the service-role key (the same documented
- * exception `startCheckout()` uses), since `authenticated` has no SELECT
- * grant on that column at all.
+ * `paddle_customer_id`/`paddle_subscription_id` via the service-role key
+ * (the same documented exception `startCheckout()` uses), since
+ * `authenticated` has no SELECT grant on those columns at all.
  */
 export async function openCustomerPortal(businessId: string): Promise<OpenPortalResult> {
   const verified = await verifyActiveBusiness(businessId);
   if (!verified.ok) return { status: 'error', error: verified.error };
   const { businessId: verifiedId } = verified.ctx;
 
-  const stripe = getStripeClient();
-  if (!stripe) return { status: 'not_configured' };
+  const paddle = getPaddleClient();
+  if (!paddle) return { status: 'not_configured' };
 
   const service = createSupabaseServiceRoleClient();
   if (!service) return { status: 'not_configured' };
 
   const { data: row, error: loadError } = await service
     .from('business_subscriptions')
-    .select('stripe_customer_id')
+    .select('paddle_customer_id, paddle_subscription_id')
     .eq('business_id', verifiedId)
     .maybeSingle();
 
   if (loadError) return { status: 'error', error: GENERIC_BILLING_ERROR };
 
-  const customerId = (row as Pick<BusinessSubscriptionRow, 'stripe_customer_id'> | null)
-    ?.stripe_customer_id;
+  const record = row as SubscriptionSecretsRow | null;
+  const customerId = record?.paddle_customer_id;
   if (!customerId) return { status: 'no_customer' };
 
-  const siteUrl = getSiteUrl();
-
   try {
-    const session = await stripe.billingPortal.sessions.create({
-      customer: customerId,
-      return_url: `${siteUrl}/dashboard/billing`
-    });
-    return { status: 'ok', url: session.url };
+    const session = await paddle.customerPortalSessions.create(
+      customerId,
+      record?.paddle_subscription_id ? [record.paddle_subscription_id] : []
+    );
+    return { status: 'ok', url: session.urls.general.overview };
   } catch {
     return { status: 'error', error: GENERIC_BILLING_ERROR };
   }

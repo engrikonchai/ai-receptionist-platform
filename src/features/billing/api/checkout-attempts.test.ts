@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import type Stripe from 'stripe';
-import { claimCheckoutAttempt, recordCheckoutSession } from './checkout-attempts';
+import type { Paddle } from '@paddle/paddle-node-sdk';
+import { claimCheckoutAttempt, recordTransactionId } from './checkout-attempts';
 
-const syncSubscriptionFromStripe = vi.fn();
-vi.mock('@/lib/stripe/sync', () => ({
-  syncSubscriptionFromStripe: (...args: unknown[]) => syncSubscriptionFromStripe(...args)
+const syncSubscriptionFromPaddle = vi.fn();
+vi.mock('@/lib/paddle/sync', () => ({
+  syncSubscriptionFromPaddle: (...args: unknown[]) => syncSubscriptionFromPaddle(...args)
 }));
 
 /**
@@ -14,11 +14,7 @@ vi.mock('@/lib/stripe/sync', () => ({
  * partial index (`billing_checkout_attempts_one_pending_per_business`)
  * enforces in Postgres: at most one `status = 'pending'` row per
  * business — and assigns a strictly monotonic `generation` on insert,
- * mirroring the real `generated always as identity` column. This is
- * what makes the concurrency tests below genuine regression tests of
- * the race-safety guarantee, not just assertions about call arguments —
- * there is no live Postgres instance in this environment, so this
- * mock's own uniqueness/generation logic stands in for it.
+ * mirroring the real `generated always as identity` column.
  */
 function fakeCheckoutAttemptsClient() {
   type Row = {
@@ -26,8 +22,7 @@ function fakeCheckoutAttemptsClient() {
     business_id: string;
     generation: number;
     status: string;
-    stripe_checkout_session_id: string | null;
-    expires_at: string;
+    paddle_transaction_id: string | null;
   };
   const rows: Row[] = [];
   let nextGeneration = 1;
@@ -57,8 +52,7 @@ function fakeCheckoutAttemptsClient() {
           business_id: businessId,
           generation,
           status: (payload!.status as string) ?? 'pending',
-          stripe_checkout_session_id: null,
-          expires_at: payload!.expires_at as string
+          paddle_transaction_id: null
         });
         return { data: { generation }, error: null };
       }
@@ -86,14 +80,6 @@ function fakeCheckoutAttemptsClient() {
           if (prop === 'eq') {
             return (column: string, value: unknown) => {
               filters.push((row) => (row as unknown as Record<string, unknown>)[column] === value);
-              return proxy;
-            };
-          }
-          if (prop === 'lt') {
-            return (column: string, value: string) => {
-              filters.push(
-                (row) => ((row as unknown as Record<string, unknown>)[column] as string) < value
-              );
               return proxy;
             };
           }
@@ -126,40 +112,47 @@ function fakeCheckoutAttemptsClient() {
   return { service: { from } as unknown as SupabaseClient, rows };
 }
 
-function fakeStripe(sessions: Record<string, Partial<Stripe.Checkout.Session>>) {
-  const retrieve = vi.fn(async (id: string) => {
-    const session = sessions[id];
-    if (!session) throw new Error('no such session');
-    return session as unknown as Stripe.Checkout.Session;
+function fakePaddle(
+  transactions: Record<string, { status: string; subscriptionId?: string | null }>
+) {
+  const get = vi.fn(async (id: string) => {
+    const transaction = transactions[id];
+    if (!transaction) throw new Error('no such transaction');
+    return { id, subscriptionId: null, ...transaction };
   });
-  return { stripe: { checkout: { sessions: { retrieve } } } as unknown as Stripe, retrieve };
+  const subscriptionsGet = vi.fn(async (id: string) => ({ id }));
+  return {
+    paddle: {
+      transactions: { get },
+      subscriptions: { get: subscriptionsGet }
+    } as unknown as Paddle,
+    get,
+    subscriptionsGet
+  };
 }
 
 const BUSINESS_ID = 'biz-1';
 
 beforeEach(() => {
-  syncSubscriptionFromStripe.mockReset();
+  syncSubscriptionFromPaddle.mockReset();
 });
 
 describe('claimCheckoutAttempt — new attempts', () => {
-  it('assigns a monotonic generation and an expiresAt to a fresh claim', async () => {
+  it('assigns a monotonic generation to a fresh claim', async () => {
     const { service } = fakeCheckoutAttemptsClient();
-    const { stripe } = fakeStripe({});
+    const { paddle } = fakePaddle({});
 
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
 
-    expect(claim.kind).toBe('new');
-    if (claim.kind !== 'new') throw new Error('expected new');
-    expect(claim.generation).toBe(1);
-    expect(claim.expiresAt.getTime()).toBeGreaterThan(Date.now());
+    expect(claim).toEqual({ kind: 'new', attemptId: expect.any(String), generation: 1 });
   });
 
   it('never lets a business_id it does not own affect a different business’s pending attempt', async () => {
     const { service, rows } = fakeCheckoutAttemptsClient();
-    const { stripe } = fakeStripe({});
+    const { paddle } = fakePaddle({});
 
-    const forBusinessA = await claimCheckoutAttempt(service, stripe, 'biz-a');
-    const forBusinessB = await claimCheckoutAttempt(service, stripe, 'biz-b');
+    const forBusinessA = await claimCheckoutAttempt(service, paddle, 'biz-a');
+    const forBusinessB = await claimCheckoutAttempt(service, paddle, 'biz-b');
 
     expect(forBusinessA.kind).toBe('new');
     expect(forBusinessB.kind).toBe('new');
@@ -167,167 +160,165 @@ describe('claimCheckoutAttempt — new attempts', () => {
   });
 });
 
-describe('claimCheckoutAttempt — DB expiry vs. Stripe session state (item 1)', () => {
-  it('reuses an open Stripe session even though the DB attempt’s own expires_at has already passed', async () => {
+describe('claimCheckoutAttempt — no safe resume without a Paddle idempotency key (concurrency)', () => {
+  it('two simultaneous claims for the same business converge on exactly one winner — the loser must retry, never create a competing transaction', async () => {
     const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_open');
-    // Simulate the DB row's own expires_at having already passed.
-    rows[0]!.expires_at = new Date(Date.now() - 60_000).toISOString();
+    const { paddle } = fakePaddle({});
 
-    const { stripe } = fakeStripe({
-      cs_open: { status: 'open', url: 'https://checkout.stripe.com/cs_open' }
-    });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
+    const first = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    const second = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
 
-    expect(claim).toEqual({ kind: 'reuse', url: 'https://checkout.stripe.com/cs_open' });
-  });
-
-  it('never expires an attempt purely because its own timestamp passed, without checking the recorded Stripe session first', async () => {
-    const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_open');
-    rows[0]!.expires_at = new Date(Date.now() - 60_000).toISOString();
-
-    const { stripe, retrieve } = fakeStripe({
-      cs_open: { status: 'open', url: 'https://checkout.stripe.com/cs_open' }
-    });
-    await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    // The claim consulted Stripe's own status before doing anything else.
-    expect(retrieve).toHaveBeenCalledWith('cs_open');
-    expect(rows[0]!.status).toBe('pending');
-  });
-
-  it('marks the attempt expired and allows a brand-new one only once Stripe itself reports the session expired', async () => {
-    const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_dead');
-
-    const { stripe } = fakeStripe({ cs_dead: { status: 'expired', url: null } });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(claim.kind).toBe('new');
-    expect(rows.find((r) => r.id === first.attemptId)?.status).toBe('expired');
+    expect(first.kind).toBe('new');
+    expect(second).toEqual({ kind: 'retry' });
     expect(rows.filter((r) => r.status === 'pending')).toHaveLength(1);
   });
 
-  it('never allows a new attempt while the old Stripe session is still open, even long after expires_at', async () => {
-    const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_open');
-    rows[0]!.expires_at = new Date(Date.now() - 60_000).toISOString();
+  it('a retried call reuses the winner’s recorded, still-open transaction instead of creating a second one', async () => {
+    const { service } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'ready' } });
 
-    const { stripe } = fakeStripe({
-      cs_open: { status: 'open', url: 'https://checkout.stripe.com/cs_open' }
-    });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const retried = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(retried).toEqual({ kind: 'reuse', transactionId: 'txn_1' });
+  });
+
+  it('reuses a draft transaction the same way as a ready one', async () => {
+    const { service } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'draft' } });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const retried = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(retried).toEqual({ kind: 'reuse', transactionId: 'txn_1' });
+  });
+});
+
+describe('claimCheckoutAttempt — a succeeded transaction is never replaced', () => {
+  it('reports already_subscribed and synchronizes the subscription when the recorded transaction succeeded', async () => {
+    const { service, rows } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'completed', subscriptionId: 'sub_1' } });
+    syncSubscriptionFromPaddle.mockResolvedValue({ ok: true });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim).toEqual({ kind: 'already_subscribed' });
+    expect(syncSubscriptionFromPaddle).toHaveBeenCalledWith(service, { id: 'sub_1' }, null);
+    expect(rows.find((r) => r.id === winner.attemptId)?.status).toBe('completed');
+  });
+
+  it('treats "paid" and "billed" the same as "completed"', async () => {
+    for (const status of ['paid', 'billed']) {
+      const { service } = fakeCheckoutAttemptsClient();
+      const { paddle } = fakePaddle({ txn_1: { status, subscriptionId: 'sub_1' } });
+      syncSubscriptionFromPaddle.mockResolvedValue({ ok: true });
+
+      const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+      if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+      await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+      const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+      expect(claim).toEqual({ kind: 'already_subscribed' });
+    }
+  });
+
+  it('reports processing, never creating a new Checkout, when the webhook/DB subscription row is delayed', async () => {
+    const { service, rows } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'completed', subscriptionId: 'sub_1' } });
+    syncSubscriptionFromPaddle.mockResolvedValue({ ok: false, reason: 'db_error' });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim).toEqual({ kind: 'processing' });
+    expect(rows.filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  it('reports processing when a succeeded transaction has no subscription id to synchronize', async () => {
+    const { service } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'completed', subscriptionId: null } });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim).toEqual({ kind: 'processing' });
+    expect(syncSubscriptionFromPaddle).not.toHaveBeenCalled();
+  });
+
+  it('never fabricates an event-occurred-at timestamp for this proactive, non-webhook sync', async () => {
+    const { service } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'completed', subscriptionId: 'sub_1' } });
+    syncSubscriptionFromPaddle.mockResolvedValue({ ok: true });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(syncSubscriptionFromPaddle).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      null
+    );
+  });
+});
+
+describe('claimCheckoutAttempt — a dead transaction allows a fresh attempt', () => {
+  it('marks the attempt expired and claims a new one only once Paddle itself reports the transaction canceled', async () => {
+    const { service, rows } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'canceled' } });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim.kind).toBe('new');
+    expect(rows.find((r) => r.id === winner.attemptId)?.status).toBe('expired');
+    expect(rows.filter((r) => r.status === 'pending')).toHaveLength(1);
+  });
+
+  it('never allows a new attempt while the old transaction is still open (ready/draft)', async () => {
+    const { service, rows } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({ txn_1: { status: 'ready' } });
+
+    const winner = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    if (winner.kind !== 'new') throw new Error('expected the first claim to win');
+    await recordTransactionId(service, winner.attemptId, 'txn_1');
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
 
     expect(claim.kind).not.toBe('new');
     expect(rows.filter((r) => r.status === 'pending')).toHaveLength(1);
   });
 });
 
-describe('claimCheckoutAttempt — a completed session is never replaced (item 1)', () => {
-  it('reports already_subscribed and synchronizes the subscription when the recorded session completed and syncing succeeds', async () => {
-    const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_done');
-    syncSubscriptionFromStripe.mockResolvedValue({ ok: true });
-
-    const { stripe } = fakeStripe({
-      cs_done: { status: 'complete', subscription: 'sub_1', url: null }
-    });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(claim).toEqual({ kind: 'already_subscribed' });
-    expect(syncSubscriptionFromStripe).toHaveBeenCalledWith(service, stripe, 'sub_1');
-    expect(rows.find((r) => r.id === first.attemptId)?.status).toBe('completed');
-  });
-
-  it('reports processing, never creating a new Checkout, when the webhook/DB subscription row is delayed', async () => {
-    const { service, rows } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_done');
-    // Synchronization hasn't caught up yet (e.g. a transient DB error, or
-    // the webhook truly hasn't arrived and this is a best-effort inline
-    // attempt at claim time).
-    syncSubscriptionFromStripe.mockResolvedValue({ ok: false, reason: 'db_error' });
-
-    const { stripe } = fakeStripe({
-      cs_done: { status: 'complete', subscription: 'sub_1', url: null }
-    });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(claim).toEqual({ kind: 'processing' });
-    // Never creates a second Checkout Session — the pending row is
-    // simply marked completed, not replaced.
-    expect(rows.filter((r) => r.status === 'pending')).toHaveLength(0);
-  });
-
-  it('reports processing when a completed session has no subscription id to synchronize', async () => {
-    const { service } = fakeCheckoutAttemptsClient();
-    const first = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    await recordCheckoutSession(service, first.attemptId, 'cs_done');
-
-    const { stripe } = fakeStripe({
-      cs_done: { status: 'complete', subscription: null, url: null }
-    });
-    const claim = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(claim).toEqual({ kind: 'processing' });
-    expect(syncSubscriptionFromStripe).not.toHaveBeenCalled();
-  });
-});
-
-describe('claimCheckoutAttempt — recoverable session recording (item 2)', () => {
-  it('resumes with the SAME attempt id/idempotency key when no session id was ever recorded', async () => {
-    const { service } = fakeCheckoutAttemptsClient();
-    const { stripe } = fakeStripe({});
-
-    const first = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-    if (first.kind !== 'new') throw new Error('expected new');
-    // Simulate: Stripe created the session, but recordCheckoutSession()
-    // itself failed, so no session id ever landed in the DB.
-
-    const retried = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(retried).toEqual({
-      kind: 'resume',
-      attemptId: first.attemptId,
-      generation: first.generation,
-      expiresAt: first.expiresAt
-    });
-  });
-
-  it('a concurrent mid-flight caller (no session id recorded yet) also safely resumes rather than erroring or racing a new attempt', async () => {
-    const { service } = fakeCheckoutAttemptsClient();
-    const { stripe } = fakeStripe({});
-
-    const winner = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-    const loser = await claimCheckoutAttempt(service, stripe, BUSINESS_ID);
-
-    expect(winner.kind).toBe('new');
-    expect(loser.kind).toBe('resume');
-    if (winner.kind !== 'new' || loser.kind !== 'resume') throw new Error('unexpected kinds');
-    expect(loser.attemptId).toBe(winner.attemptId);
-  });
-});
-
-describe('recordCheckoutSession', () => {
+describe('recordTransactionId', () => {
   it('returns a typed success result when the write succeeds', async () => {
     const { service } = fakeCheckoutAttemptsClient();
-    const claim = await claimCheckoutAttempt(service, fakeStripe({}).stripe, BUSINESS_ID);
+    const { paddle } = fakePaddle({});
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
     if (claim.kind !== 'new') throw new Error('expected new');
 
-    const result = await recordCheckoutSession(service, claim.attemptId, 'cs_ok');
+    const result = await recordTransactionId(service, claim.attemptId, 'txn_ok');
 
     expect(result).toEqual({ ok: true });
   });
@@ -340,7 +331,7 @@ describe('recordCheckoutSession', () => {
     });
     const service = { from: failingFrom } as unknown as SupabaseClient;
 
-    const result = await recordCheckoutSession(service, 'attempt-1', 'cs_ok');
+    const result = await recordTransactionId(service, 'attempt-1', 'txn_ok');
 
     expect(result).toEqual({ ok: false, reason: '53300' });
   });

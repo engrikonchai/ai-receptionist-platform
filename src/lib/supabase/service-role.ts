@@ -19,20 +19,20 @@ import type { SupabaseClient } from '@supabase/supabase-js';
  *      grants `anon` nothing at all (by design — see those tables'
  *      policies), so an anon-key client cannot do this resolution or
  *      these writes.
- *   2. The verified Stripe webhook handler
- *      (src/app/api/stripe/webhook/route.ts) — a server-to-server
- *      Stripe callback with no signed-in user or cookie session at all;
- *      it authenticates via the verified Stripe signature instead, then
- *      writes `business_subscriptions`/`stripe_webhook_events` via the
+ *   2. The verified Paddle webhook handler
+ *      (src/app/api/paddle/webhook/route.ts) — a server-to-server
+ *      Paddle callback with no signed-in user or cookie session at all;
+ *      it authenticates via the verified Paddle signature instead, then
+ *      writes `business_subscriptions`/`paddle_webhook_events` via the
  *      service-role key (through the `sync_business_subscription` RPC).
  *   3. The billing Checkout/Portal server actions
  *      (src/features/billing/api/service.ts,
  *      src/features/billing/api/checkout-attempts.ts) — reading/writing
- *      `business_subscriptions`' Stripe-identifier columns
- *      (`stripe_customer_id`/`stripe_subscription_id`) and the private
+ *      `business_subscriptions`' Paddle-identifier columns
+ *      (`paddle_customer_id`/`paddle_subscription_id`) and the private
  *      `billing_checkout_attempts` table, both of which `authenticated`
  *      has no grant on at all (see
- *      supabase/migrations/20260919090000_business_subscriptions.sql).
+ *      supabase/migrations/20260920100000_paddle_billing_foundation.sql).
  *      Every one of these calls happens only *after*
  *      `verifyActiveBusiness()` has already confirmed the signed-in
  *      owner really owns the business id in question, and is always

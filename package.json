@@ -24,6 +24,8 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.47",
     "@base-ui/react": "^1.6.0",
+    "@paddle/paddle-js": "^1.6.5",
+    "@paddle/paddle-node-sdk": "^3.10.0",
     "@shadcn/helpers": "^0.1.0",
     "@shadcn/react": "^0.2.1",
     "@supabase/ssr": "^0.12.6",
@@ -57,7 +59,6 @@
     "recharts": "3.8.0",
     "sharp": "^0.35.3",
     "sonner": "^1.7.4",
-    "stripe": "^22.6.2",
     "tailwind-merge": "^3.5.0",
     "tailwindcss": "^4.2.2",
     "tailwindcss-animate": "^1.0.7",

@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import { formatDate, formatMoney, SUBSCRIPTION_STATUS_LABEL } from './format';
 
 describe('formatMoney', () => {
-  it('formats cents as a currency string using the currency Stripe returned', () => {
+  it('formats cents as a currency string using the currency Paddle returned', () => {
     expect(formatMoney(2900, 'usd')).toBe('$29.00');
   });
 
-  it('uppercases a lowercase Stripe currency code', () => {
+  it('uppercases a lowercase Paddle currency code', () => {
     expect(formatMoney(1000, 'eur')).toContain('10.00');
   });
 });
@@ -22,17 +22,8 @@ describe('formatDate', () => {
 });
 
 describe('SUBSCRIPTION_STATUS_LABEL', () => {
-  it('has a label for every normalized Stripe subscription status', () => {
-    const statuses = [
-      'incomplete',
-      'incomplete_expired',
-      'trialing',
-      'active',
-      'past_due',
-      'canceled',
-      'unpaid',
-      'paused'
-    ] as const;
+  it('has a label for every normalized Paddle subscription status', () => {
+    const statuses = ['trialing', 'active', 'past_due', 'paused', 'canceled'] as const;
 
     for (const status of statuses) {
       expect(SUBSCRIPTION_STATUS_LABEL[status]).toBeTruthy();
