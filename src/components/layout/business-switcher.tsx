@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Icons } from '@/components/icons';
 import {
@@ -17,27 +16,25 @@ import type { BusinessRow } from '@/lib/supabase/database.types';
 
 export function BusinessSwitcher({
   businesses,
-  initialActiveBusinessId
+  activeBusinessId,
+  onActiveBusinessIdChange
 }: {
   businesses: BusinessRow[];
-  initialActiveBusinessId: string | null;
+  /** The resolved active business id — owned by AppSidebar (see use-nav-badge-counts.ts, which needs the same id to scope its own queries), not this component, so both stay in sync with a single source of truth. */
+  activeBusinessId: string | null;
+  onActiveBusinessIdChange: (businessId: string) => void;
 }) {
   // `businesses` only ever contains rows Row Level Security already
   // scoped to the signed-in owner, so any id picked from this list is
   // guaranteed to belong to them — this is the "verify" step.
   const router = useRouter();
-  const [activeId, setActiveId] = useState<string | null>(
-    initialActiveBusinessId && businesses.some((b) => b.id === initialActiveBusinessId)
-      ? initialActiveBusinessId
-      : (businesses[0]?.id ?? null)
-  );
 
-  const active = businesses.find((b) => b.id === activeId) ?? businesses[0] ?? null;
+  const active = businesses.find((b) => b.id === activeBusinessId) ?? businesses[0] ?? null;
 
   function handleSelect(businessId: string) {
     if (!businesses.some((b) => b.id === businessId)) return;
-    if (businessId === activeId) return;
-    setActiveId(businessId);
+    if (businessId === activeBusinessId) return;
+    onActiveBusinessIdChange(businessId);
     setActiveBusinessCookie(businessId);
     // Every business-scoped page (Overview, Inbox, ...) resolves the
     // active business from this cookie on the server, so a plain client
