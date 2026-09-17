@@ -18,12 +18,21 @@ import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
  * allowing traffic through on failure would defeat the entire point.
  */
 
-export type RateLimitRoute = 'config' | 'session' | 'message';
+export type RateLimitRoute = 'config' | 'session' | 'message' | 'handoff';
 
 export const RATE_LIMITS: Record<RateLimitRoute, { limit: number; windowSeconds: number }> = {
   config: { limit: 30, windowSeconds: 60 },
   session: { limit: 10, windowSeconds: 60 },
-  message: { limit: 20, windowSeconds: 60 }
+  message: { limit: 20, windowSeconds: 60 },
+  // A deliberate, one-off visitor action (not a per-keystroke or
+  // per-turn call like 'message') — a genuine visitor never submits
+  // this more than once or twice per session. Tighter than 'session'
+  // (10/60s) since there is no legitimate reason for a real visitor to
+  // approach even that: 5/60s comfortably covers a mis-click + retry
+  // without leaving meaningful headroom for automated abuse (each
+  // allowed request can write a lead + handoff row and an
+  // acknowledgement message).
+  handoff: { limit: 5, windowSeconds: 60 }
 };
 
 export type RateLimitOutcome =

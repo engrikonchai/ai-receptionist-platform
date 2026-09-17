@@ -146,7 +146,10 @@ export function ActiveConversationPanel({
           <ConversationStatusBadge status={conversation.status} />
           <HumanTakeoverBadge humanTakeover={conversation.humanTakeover} />
           {conversation.handoffStatus && (
-            <HandoffStatusIndicator status={conversation.handoffStatus} />
+            <HandoffStatusIndicator
+              status={conversation.handoffStatus}
+              humanTakeover={conversation.humanTakeover}
+            />
           )}
 
           {conversation.humanTakeover ? (

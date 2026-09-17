@@ -1,6 +1,12 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { ConversationRow, MessageRow } from '@/lib/supabase/database.types';
 import { generateKnowledgeReply } from './knowledge-reply';
+import {
+  buildContactLine,
+  sanitizeFreeText,
+  HANDOFF_MESSAGE_MAX_LENGTH,
+  HANDOFF_NAME_MAX_LENGTH
+} from './handoff-contact';
 import { isOriginAllowed } from './origin';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
 import {
@@ -50,6 +56,7 @@ type ResolvedWidget =
       welcomeMessageEn: string | null;
       welcomeMessageMe: string | null;
       welcomeMessageRu: string | null;
+      humanHandoffEnabled: boolean;
     };
 
 type BusinessLookupRow = { id: string; is_active: boolean; default_language: string };
@@ -60,6 +67,7 @@ type WidgetSettingsLookupRow = {
   welcome_message_en: string | null;
   welcome_message_me: string | null;
   welcome_message_ru: string | null;
+  human_handoff_enabled: boolean;
 };
 
 /**
@@ -90,7 +98,7 @@ async function resolveWidgetForRuntime(
   const { data: widgetSettings } = await supabase
     .from('widget_settings')
     .select(
-      'business_id, widget_enabled, allowed_origins, welcome_message_en, welcome_message_me, welcome_message_ru'
+      'business_id, widget_enabled, allowed_origins, welcome_message_en, welcome_message_me, welcome_message_ru, human_handoff_enabled'
     )
     .eq('business_id', businessRow.id)
     .maybeSingle();
@@ -112,7 +120,8 @@ async function resolveWidgetForRuntime(
     defaultLanguage: businessRow.default_language,
     welcomeMessageEn: widgetRow.welcome_message_en,
     welcomeMessageMe: widgetRow.welcome_message_me,
-    welcomeMessageRu: widgetRow.welcome_message_ru
+    welcomeMessageRu: widgetRow.welcome_message_ru,
+    humanHandoffEnabled: widgetRow.human_handoff_enabled
   };
 }
 
@@ -316,6 +325,24 @@ export async function postMessage(params: {
     return { status: 'ok', messages: [] };
   }
 
+  // A pending handoff request (submitted, not yet accepted or
+  // resolved — see submitHandoffRequest() below) means a visitor
+  // already asked for a person; the one acknowledgement message that
+  // request creates is the AI's only reply here — it must not
+  // continue answering as if that request never happened. Once the
+  // handoff is resolved (or the owner takes over, already covered by
+  // human_takeover above), normal replies resume.
+  const { data: activeHandoff } = await supabase
+    .from('handoffs')
+    .select('id')
+    .eq('conversation_id', conversation.id)
+    .neq('status', 'resolved')
+    .limit(1)
+    .maybeSingle();
+  if (activeHandoff) {
+    return { status: 'ok', messages: [] };
+  }
+
   const replyText = await generateKnowledgeReply(
     supabase,
     widget.businessId,
@@ -365,4 +392,193 @@ async function loadMessages(
   return ((data as Pick<MessageRow, 'role' | 'content'>[] | null) ?? [])
     .filter((row) => row.role === 'user' || row.role === 'assistant')
     .map((row) => ({ role: row.role as 'user' | 'assistant', text: row.content }));
+}
+
+/** Postgres unique_violation — same constant/handling as messages.client_message_id's own duplicate-submit guard in src/features/inbox/api/service.ts's sendHumanReply(). */
+const UNIQUE_VIOLATION = '23505';
+
+const HANDOFF_ACKNOWLEDGEMENT_TEXT =
+  "Thanks — we've let the team know and someone will be in touch with you shortly.";
+
+/** `HO-<base36 timestamp><4 random base36 chars>` — a short, human-scannable reference, not a security token; leads.reference has no known uniqueness requirement this needs to defend against beyond "very unlikely to collide". */
+function generateLeadReference(): string {
+  const timestamp = Date.now().toString(36).toUpperCase();
+  const randomSuffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `HO-${timestamp}${randomSuffix}`;
+}
+
+export type HandoffRequestResult =
+  | { status: 'unknown' }
+  | { status: 'origin_denied' }
+  | { status: 'disabled' }
+  | { status: 'unavailable' }
+  | { status: 'unauthorized' }
+  | { status: 'ok' };
+
+/**
+ * The visitor-facing "Talk to a person" contact form's submit handler
+ * (POST /api/public-widget/handoff) — mirrors postMessage()'s own
+ * resolve → sign-check → authorize → load-own-conversation sequence
+ * exactly, then does three additional things postMessage() doesn't:
+ *
+ *  1. Confirms `human_handoff_enabled` server-side — never trusts the
+ *     widget UI's own decision to show or hide the "Talk to a person"
+ *     action.
+ *  2. Is idempotent on `clientRequestId` (see
+ *     supabase/migrations/20260918090000_handoff_idempotency.sql): a
+ *     retried/replayed submission returns the same 'ok' result without
+ *     writing anything a second time.
+ *  3. Creates or updates exactly one `leads` row and inserts exactly
+ *     one `handoffs` row for this conversation, marks the conversation
+ *     `status = 'handed_off'` (an existing, previously-unused
+ *     ConversationStatus value — see database.types.ts) and
+ *     `lead_created = true`, and inserts ONE acknowledgement message
+ *     directly — never through generateKnowledgeReply(), which this
+ *     feature does not modify.
+ *
+ * Every field the caller supplies has already passed
+ * `publicWidgetHandoffRequestSchema` (including its cross-field
+ * email/phone `.superRefine()`) before this runs — this function still
+ * re-sanitizes name/message (defense in depth, and consistent with
+ * every other write path in this app trusting only its own
+ * validation, never a caller's).
+ */
+export async function submitHandoffRequest(params: {
+  publicWidgetId: string;
+  visitorId: string;
+  conversationId: string;
+  sessionToken: string;
+  clientRequestId: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  message?: string;
+  originHeader: string | null;
+}): Promise<HandoffRequestResult> {
+  const widget = await resolveWidgetForRuntime(params.publicWidgetId, params.originHeader);
+  if (widget.status !== 'ok') return widget;
+  if (!widget.humanHandoffEnabled) return { status: 'disabled' };
+
+  if (!isWidgetSessionSigningConfigured()) return { status: 'unavailable' };
+
+  const claims = verifyWidgetSessionToken(params.sessionToken);
+  const isAuthorized = tokenMatchesResumeRequest(claims, {
+    publicWidgetId: params.publicWidgetId,
+    conversationId: params.conversationId,
+    visitorId: params.visitorId
+  });
+  if (!isAuthorized) return { status: 'unauthorized' };
+
+  const supabase = createSupabaseServiceRoleClient();
+  if (!supabase) return { status: 'unavailable' };
+
+  const conversation = await loadOwnConversation(
+    supabase,
+    widget.businessId,
+    params.conversationId,
+    params.visitorId
+  );
+  if (!conversation) return { status: 'unauthorized' };
+
+  // Idempotency: a retried/replayed submission with the same
+  // clientRequestId returns success without writing anything again —
+  // checked up front so a retry never re-creates the lead, re-inserts
+  // the handoff, or re-sends the acknowledgement message.
+  const { data: existingHandoff } = await supabase
+    .from('handoffs')
+    .select('id')
+    .eq('client_request_id', params.clientRequestId)
+    .maybeSingle();
+  if (existingHandoff) return { status: 'ok' };
+
+  const name = sanitizeFreeText(params.name, HANDOFF_NAME_MAX_LENGTH);
+  const email = params.email?.trim() ?? '';
+  const phone = params.phone?.trim() ?? '';
+  const contactLine = buildContactLine(email, phone);
+  const message = params.message
+    ? sanitizeFreeText(params.message, HANDOFF_MESSAGE_MAX_LENGTH)
+    : '';
+
+  // Lead: create or update, scoped to this conversation — never a
+  // second lead row for the same conversation's handoff request.
+  const { data: existingLead } = await supabase
+    .from('leads')
+    .select('id')
+    .eq('business_id', widget.businessId)
+    .eq('conversation_id', params.conversationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  const leadFields = {
+    name,
+    contact: contactLine,
+    note: message || null,
+    language: conversation.detected_language,
+    source: 'website' as const,
+    consent_at: new Date().toISOString()
+  };
+
+  if (existingLead) {
+    await supabase
+      .from('leads')
+      .update(leadFields)
+      .eq('id', (existingLead as { id: string }).id);
+  } else {
+    await supabase.from('leads').insert({
+      ...leadFields,
+      business_id: widget.businessId,
+      conversation_id: params.conversationId,
+      reference: generateLeadReference(),
+      status: 'new'
+    });
+  }
+
+  // Handoff: insert, relying on the unique index on client_request_id
+  // (partial — see the migration) to catch a genuine race against an
+  // identical concurrent submission that slipped past the existence
+  // check above.
+  const { error: handoffError } = await supabase.from('handoffs').insert({
+    business_id: widget.businessId,
+    conversation_id: params.conversationId,
+    customer_name: name,
+    contact: contactLine,
+    question: message || null,
+    status: 'new',
+    client_request_id: params.clientRequestId
+  });
+
+  if (handoffError) {
+    if (handoffError.code === UNIQUE_VIOLATION) {
+      // Lost the race to an identical concurrent request — it already
+      // created everything below; this is still a success from the
+      // caller's point of view.
+      return { status: 'ok' };
+    }
+    return { status: 'unavailable' };
+  }
+
+  // 'handed_off' is an existing ConversationStatus value (see
+  // database.types.ts) that, before this feature, nothing ever set —
+  // it now means exactly what its name says: needs human attention,
+  // requested but not yet accepted (see takeOverConversation() in
+  // src/features/inbox/api/service.ts for what happens once an owner
+  // does accept it).
+  await supabase
+    .from('conversations')
+    .update({ status: 'handed_off', lead_created: true })
+    .eq('id', params.conversationId);
+
+  // One acknowledgement, inserted directly — never routed through
+  // generateKnowledgeReply(), which stays untouched. This is the "AI
+  // may send one acknowledgement but should not continue pretending to
+  // be a human" behavior; postMessage()'s own active-handoff check
+  // (above) is what stops any further automated reply after this.
+  await supabase.from('messages').insert({
+    conversation_id: params.conversationId,
+    role: 'assistant',
+    content: HANDOFF_ACKNOWLEDGEMENT_TEXT
+  });
+
+  return { status: 'ok' };
 }

@@ -8,6 +8,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarMenuSub,
@@ -18,6 +19,7 @@ import {
 } from '@/components/ui/sidebar';
 import { navGroups } from '@/config/nav-config';
 import { useFilteredNavGroups } from '@/hooks/use-nav';
+import { useNavBadgeCounts } from '@/hooks/use-nav-badge-counts';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import * as React from 'react';
@@ -25,6 +27,12 @@ import { Icons } from '@/components/icons';
 import { BusinessSwitcher } from '@/components/layout/business-switcher';
 import { OwnerMenu } from '@/components/layout/owner-menu';
 import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
+
+/** Nav item titles a live badge count applies to — see use-nav-badge-counts.ts. Matched by title rather than a new field on NavItem/nav-config.ts, which has no badge slot and is otherwise plain shared config. */
+const NAV_BADGE_COUNT: Record<string, 'pendingHandoffCount' | 'newLeadCount'> = {
+  Inbox: 'pendingHandoffCount',
+  Leads: 'newLeadCount'
+};
 
 export default function AppSidebar({
   ownerEmail,
@@ -40,6 +48,18 @@ export default function AppSidebar({
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
   const filteredGroups = useFilteredNavGroups(navGroups);
+
+  // Owned here (not inside BusinessSwitcher) so the same id can also
+  // scope useNavBadgeCounts()'s queries below — both need to agree on
+  // which business is active.
+  const [activeBusinessId, setActiveBusinessId] = React.useState<string | null>(
+    initialActiveBusinessId && businesses.some((b) => b.id === initialActiveBusinessId)
+      ? initialActiveBusinessId
+      : (businesses[0]?.id ?? null)
+  );
+
+  const { pendingHandoffCount, newLeadCount } = useNavBadgeCounts(activeBusinessId);
+  const badgeCountByKind = { pendingHandoffCount, newLeadCount };
 
   // On mobile, the sidebar renders as an overlay Sheet (see ui/sidebar.tsx).
   // dashboard/layout.tsx's SidebarProvider is shared across every
@@ -59,7 +79,8 @@ export default function AppSidebar({
       <SidebarHeader>
         <BusinessSwitcher
           businesses={businesses}
-          initialActiveBusinessId={initialActiveBusinessId}
+          activeBusinessId={activeBusinessId}
+          onActiveBusinessIdChange={setActiveBusinessId}
         />
       </SidebarHeader>
       <SidebarContent className='overflow-x-hidden'>
@@ -125,6 +146,16 @@ export default function AppSidebar({
                       <Icon />
                       <span>{item.title}</span>
                     </SidebarMenuButton>
+                    {NAV_BADGE_COUNT[item.title] &&
+                      badgeCountByKind[NAV_BADGE_COUNT[item.title]] > 0 && (
+                        <SidebarMenuBadge
+                          aria-label={`${badgeCountByKind[NAV_BADGE_COUNT[item.title]]} ${
+                            item.title === 'Inbox' ? 'pending handoffs' : 'new leads'
+                          }`}
+                        >
+                          {badgeCountByKind[NAV_BADGE_COUNT[item.title]]}
+                        </SidebarMenuBadge>
+                      )}
                   </SidebarMenuItem>
                 );
               })}

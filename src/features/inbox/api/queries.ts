@@ -72,20 +72,35 @@ export function conversationHandoffOptions(businessId: string, conversationId: s
 
 function conversationActionMutation(
   action: (businessId: string, conversationId: string) => Promise<ConversationActionResult>,
-  businessId: string
+  businessId: string,
+  // takeOverConversation/resolveConversation may also advance the
+  // conversation's own handoff row (see advanceHandoffStatus() in
+  // api/service.ts) — invalidating inboxKeys.handoff/.lead alongside
+  // .conversations keeps the customer-details panel's Handoff/Lead
+  // sections from showing stale data after either action, without
+  // querying anything this mutation didn't already touch on success.
+  invalidatesHandoff = false
 ) {
   return mutationOptions({
     mutationFn: (conversationId: string) => action(businessId, conversationId),
-    onSuccess: (result) => {
-      if (result.success) {
-        void getQueryClient().invalidateQueries({ queryKey: inboxKeys.conversations(businessId) });
+    onSuccess: (result, conversationId) => {
+      if (!result.success) return;
+      const queryClient = getQueryClient();
+      void queryClient.invalidateQueries({ queryKey: inboxKeys.conversations(businessId) });
+      if (invalidatesHandoff) {
+        void queryClient.invalidateQueries({
+          queryKey: inboxKeys.handoff(businessId, conversationId)
+        });
+        void queryClient.invalidateQueries({
+          queryKey: inboxKeys.lead(businessId, conversationId)
+        });
       }
     }
   });
 }
 
 export function takeOverMutation(businessId: string) {
-  return conversationActionMutation(takeOverConversation, businessId);
+  return conversationActionMutation(takeOverConversation, businessId, true);
 }
 
 export function returnToAIMutation(businessId: string) {
@@ -93,7 +108,7 @@ export function returnToAIMutation(businessId: string) {
 }
 
 export function resolveConversationMutation(businessId: string) {
-  return conversationActionMutation(resolveConversation, businessId);
+  return conversationActionMutation(resolveConversation, businessId, true);
 }
 
 export function reopenConversationMutation(businessId: string) {

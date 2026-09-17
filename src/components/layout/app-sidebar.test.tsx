@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
@@ -53,24 +54,37 @@ vi.mock('./owner-menu', () => ({
   OwnerMenu: () => <div data-testid='owner-menu-stub' />
 }));
 
+// Nav badge counts have their own dedicated coverage in
+// use-nav-badge-counts.test.ts — stubbed here to zero so this file's
+// tests (link hrefs, mobile auto-close) don't also need to mock
+// conversationsOptions/leadsListOptions data just to render.
+const mockUseNavBadgeCounts = vi.fn();
+vi.mock('@/hooks/use-nav-badge-counts', () => ({
+  useNavBadgeCounts: () => mockUseNavBadgeCounts()
+}));
+
 const noBusinesses: BusinessRow[] = [];
 const noProfile: ProfileRow | null = null;
 
 function renderSidebar() {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
-    <SidebarProvider>
-      <AppSidebar
-        ownerEmail='owner@example.com'
-        profile={noProfile}
-        businesses={noBusinesses}
-        initialActiveBusinessId={null}
-      />
-    </SidebarProvider>
+    <QueryClientProvider client={queryClient}>
+      <SidebarProvider>
+        <AppSidebar
+          ownerEmail='owner@example.com'
+          profile={noProfile}
+          businesses={noBusinesses}
+          initialActiveBusinessId={null}
+        />
+      </SidebarProvider>
+    </QueryClientProvider>
   );
 }
 
 beforeEach(() => {
   setOpenMobile.mockReset();
+  mockUseNavBadgeCounts.mockReset().mockReturnValue({ pendingHandoffCount: 0, newLeadCount: 0 });
 });
 
 describe('AppSidebar — Widget nav item', () => {
@@ -135,5 +149,33 @@ describe('AppSidebar — mobile sidebar auto-close', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Widget' }));
 
     expect(setOpenMobile).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppSidebar — nav badge counts', () => {
+  it('shows no badge on Inbox or Leads when there is nothing pending', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    mockUseNavBadgeCounts.mockReturnValue({ pendingHandoffCount: 0, newLeadCount: 0 });
+    renderSidebar();
+
+    expect(screen.queryByText('3')).not.toBeInTheDocument();
+  });
+
+  it('shows the pending handoff count as a badge on the Inbox nav item', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    mockUseNavBadgeCounts.mockReturnValue({ pendingHandoffCount: 3, newLeadCount: 0 });
+    renderSidebar();
+
+    expect(screen.getByText('3')).toBeInTheDocument();
+    expect(screen.getByLabelText('3 pending handoffs')).toBeInTheDocument();
+  });
+
+  it('shows the new lead count as a badge on the Leads nav item', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    mockUseNavBadgeCounts.mockReturnValue({ pendingHandoffCount: 0, newLeadCount: 5 });
+    renderSidebar();
+
+    expect(screen.getByText('5')).toBeInTheDocument();
+    expect(screen.getByLabelText('5 new leads')).toBeInTheDocument();
   });
 });

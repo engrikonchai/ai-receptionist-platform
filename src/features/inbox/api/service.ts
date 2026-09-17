@@ -356,19 +356,16 @@ export async function fetchHandoffForConversation(
   };
 }
 
-async function updateConversation(
+async function patchConversationRow(
+  supabase: SupabaseClient,
   businessId: string,
   conversationId: string,
-  patch: { human_takeover: boolean } | { status: 'open' | 'closed' }
+  patch: { human_takeover?: boolean; status?: 'open' | 'closed' }
 ): Promise<ConversationActionResult> {
-  const verified = await verifyActiveBusiness(businessId);
-  if (!verified.ok) return { success: false, error: verified.error };
-  const { supabase, businessId: verifiedId } = verified.ctx;
-
   const { data, error } = await supabase
     .from('conversations')
     .update(patch)
-    .eq('business_id', verifiedId)
+    .eq('business_id', businessId)
     .eq('id', conversationId)
     .select('id')
     .maybeSingle();
@@ -378,13 +375,91 @@ async function updateConversation(
   return { success: true };
 }
 
+async function updateConversation(
+  businessId: string,
+  conversationId: string,
+  patch: { human_takeover?: boolean; status?: 'open' | 'closed' }
+): Promise<ConversationActionResult> {
+  const verified = await verifyActiveBusiness(businessId);
+  if (!verified.ok) return { success: false, error: verified.error };
+  return patchConversationRow(
+    verified.ctx.supabase,
+    verified.ctx.businessId,
+    conversationId,
+    patch
+  );
+}
+
+/**
+ * Advances the conversation's own most recent handoff row to `toStatus`
+ * — but only if one exists and its current status isn't already
+ * `resolved` (a resolved handoff is done; nothing here ever reopens
+ * one). Owner UPDATE on `handoffs` is covered by the
+ * `handoffs_update_own` RLS policy (see
+ * supabase/migrations/20260915193000_repair_live_rls_policies.sql) —
+ * this never needs the service-role client. A missing handoff (a
+ * conversation the owner took over on their own initiative, never
+ * routed through the visitor "Talk to a person" flow) is not an error;
+ * there is simply nothing to advance.
+ */
+async function advanceHandoffStatus(
+  supabase: SupabaseClient,
+  businessId: string,
+  conversationId: string,
+  toStatus: 'contacted' | 'resolved'
+): Promise<void> {
+  const { data: handoff } = await supabase
+    .from('handoffs')
+    .select('id, status')
+    .eq('business_id', businessId)
+    .eq('conversation_id', conversationId)
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (!handoff) return;
+  const row = handoff as { id: string; status: HandoffRow['status'] };
+  if (row.status === 'resolved') return;
+
+  await supabase.from('handoffs').update({ status: toStatus }).eq('id', row.id);
+}
+
+/**
+ * An owner accepting a pending handoff request — advances the
+ * conversation from `handed_off` (requested, waiting for owner) to
+ * `open` (a human is now handling it) and marks the underlying handoff
+ * `contacted`, alongside the pre-existing `human_takeover` flag that
+ * actually stops the automated reply engine (see postMessage() in
+ * src/lib/public-widget/runtime.ts). A conversation an owner takes over
+ * without any prior visitor handoff request behaves exactly as before —
+ * advanceHandoffStatus() is a no-op when there's no handoff row.
+ */
 export async function takeOverConversation(
   businessId: string,
   conversationId: string
 ): Promise<ConversationActionResult> {
-  return updateConversation(businessId, conversationId, { human_takeover: true });
+  const verified = await verifyActiveBusiness(businessId);
+  if (!verified.ok) return { success: false, error: verified.error };
+  const { supabase, businessId: verifiedId } = verified.ctx;
+
+  const result = await patchConversationRow(supabase, verifiedId, conversationId, {
+    human_takeover: true,
+    status: 'open'
+  });
+  if (!result.success) return result;
+
+  await advanceHandoffStatus(supabase, verifiedId, conversationId, 'contacted');
+  return result;
 }
 
+/**
+ * An owner explicitly handing the conversation back to the automated
+ * assistant. Deliberately never writes to `handoffs` — the Inbox
+ * derives "returned to automation" purely from the combination of an
+ * already-`contacted` handoff plus `human_takeover === false` (see
+ * HandoffStatusIndicator in status-badge.tsx), so there is nothing new
+ * to persist here.
+ */
 export async function returnToAIConversation(
   businessId: string,
   conversationId: string
@@ -392,11 +467,27 @@ export async function returnToAIConversation(
   return updateConversation(businessId, conversationId, { human_takeover: false });
 }
 
+/**
+ * An owner finishing the human conversation — closes it and hands
+ * control back to automation for any future message on this
+ * conversation, and marks the underlying handoff (if any) `resolved`.
+ */
 export async function resolveConversation(
   businessId: string,
   conversationId: string
 ): Promise<ConversationActionResult> {
-  return updateConversation(businessId, conversationId, { status: 'closed' });
+  const verified = await verifyActiveBusiness(businessId);
+  if (!verified.ok) return { success: false, error: verified.error };
+  const { supabase, businessId: verifiedId } = verified.ctx;
+
+  const result = await patchConversationRow(supabase, verifiedId, conversationId, {
+    status: 'closed',
+    human_takeover: false
+  });
+  if (!result.success) return result;
+
+  await advanceHandoffStatus(supabase, verifiedId, conversationId, 'resolved');
+  return result;
 }
 
 export async function reopenConversation(

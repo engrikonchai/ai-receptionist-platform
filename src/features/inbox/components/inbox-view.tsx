@@ -1,7 +1,8 @@
 'use client';
 
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useQueryState } from 'nuqs';
 import { useQuery } from '@tanstack/react-query';
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { Button } from '@/components/ui/button';
@@ -27,19 +28,43 @@ export function InboxView({ businessId }: { businessId: string }) {
 
   const selectedConversationId = useInboxStore((state) => state.selectedConversationId);
   const selectConversation = useInboxStore((state) => state.selectConversation);
+  const openConversation = useInboxStore((state) => state.openConversation);
   const mobileView = useInboxStore((state) => state.mobileView);
   const setCustomerSheetOpen = useInboxStore((state) => state.setCustomerSheetOpen);
 
+  // Deep-link support for "Open in Inbox" (see
+  // src/features/leads/components/lead-details-sheet.tsx) — a
+  // conversation id in the URL, e.g. /dashboard/inbox?conversation=<id>,
+  // opens that conversation once the list has loaded and clears itself
+  // from the URL so it never fights a later manual selection. Applied
+  // at most once per page load; an id that doesn't belong to any
+  // conversation this business owns is silently ignored, same as a
+  // stale or forged one.
+  const [conversationParam, setConversationParam] = useQueryState('conversation');
+  const appliedConversationParamRef = useRef(false);
+
+  useEffect(() => {
+    if (appliedConversationParamRef.current) return;
+    if (!conversationParam || !conversations) return;
+    appliedConversationParamRef.current = true;
+    if (conversations.some((c) => c.id === conversationParam)) {
+      openConversation(conversationParam);
+    }
+    void setConversationParam(null);
+  }, [conversationParam, conversations, openConversation, setConversationParam]);
+
   // Auto-select the first conversation once the list loads, without
   // forcing mobile navigation into the thread — only an explicit tap on
-  // a row (ConversationRow -> openConversation) does that.
+  // a row (ConversationRow -> openConversation) or the deep-link above
+  // does that.
   useEffect(() => {
     if (!conversations || conversations.length === 0) return;
     if (selectedConversationId && conversations.some((c) => c.id === selectedConversationId)) {
       return;
     }
+    if (conversationParam) return; // let the deep-link effect above win the race
     selectConversation(conversations[0].id);
-  }, [conversations, selectedConversationId, selectConversation]);
+  }, [conversations, selectedConversationId, selectConversation, conversationParam]);
 
   if (isError) {
     const message = error instanceof Error ? error.message : 'Please try again.';

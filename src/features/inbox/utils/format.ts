@@ -47,6 +47,24 @@ export const HANDOFF_STATUS_LABEL: Record<HandoffStatus, string> = {
   resolved: 'Resolved'
 };
 
+/**
+ * The Inbox's own human-facing state for a handoff, derived from the
+ * two columns that together carry it — `handoffs.status` plus the
+ * conversation's own `human_takeover` flag — rather than a fourth
+ * database value. `contacted` is intentionally ambiguous on its own: it
+ * means "no longer just requested" whether an owner is actively
+ * replying (`human_takeover = true`) or explicitly handed the
+ * conversation back to the assistant afterward (`human_takeover =
+ * false`, set by returnToAIConversation() in api/service.ts, which
+ * never touches `handoffs` itself) — this is the one place that tells
+ * those two apart for display.
+ */
+export function handoffStatusIndicatorLabel(status: HandoffStatus, humanTakeover: boolean): string {
+  if (status === 'new') return 'Handoff requested';
+  if (status === 'resolved') return 'Resolved';
+  return humanTakeover ? 'Being handled by human' : 'Returned to automation';
+}
+
 /** Time only for today, otherwise a short date + time — for any ISO timestamp from the DB. */
 export function formatTimestamp(iso: string): string {
   const date = new Date(iso);

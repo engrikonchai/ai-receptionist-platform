@@ -19,6 +19,14 @@
  * (see src/lib/public-widget/session-token.ts) — it never receives or
  * needs any actual secret key.
  *
+ * When the business has human hand-off turned on, the panel also shows
+ * a "Talk to a person" action that swaps in a small contact form (name,
+ * email or phone, an optional message, and a required consent
+ * checkbox), posting to /api/public-widget/handoff — see
+ * src/lib/public-widget/runtime.ts's submitHandoffRequest(). Contact
+ * details are only ever held in memory for the current page load; they
+ * are never written to localStorage.
+ *
  * Public "open from your own button" contract
  * --------------------------------------------
  * A customer's own page can open the widget from any button of their
@@ -247,12 +255,45 @@
       '.bubble.user{align-self:flex-end;background:' +
       color +
       ';color:#fff;border-bottom-right-radius:4px}' +
-      '.composer{display:flex;gap:8px;padding:10px;border-top:1px solid #e5e5e5;background:#fff}' +
-      '.composer input{flex:1;border:1px solid #ddd;border-radius:9999px;padding:8px 14px;font-size:13px;outline:none}' +
+      '.composer{display:flex;gap:8px;padding:10px;padding-bottom:calc(10px + env(safe-area-inset-bottom));border-top:1px solid #e5e5e5;background:#fff}' +
+      '.composer input{flex:1;border:1px solid #ddd;border-radius:9999px;padding:8px 14px;font-size:16px;outline:none}' +
       '.composer button{background:' +
       color +
       ';color:#fff;border:none;border-radius:9999px;width:34px;height:34px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0}' +
-      '.composer button:disabled{opacity:.5;cursor:default}';
+      '.composer button:disabled{opacity:.5;cursor:default}' +
+      '.chat-view{display:none;flex-direction:column;flex:1;min-height:0}' +
+      '.chat-view.open{display:flex}' +
+      '.handoff-trigger{flex-shrink:0;text-align:center;padding:0 10px 6px;background:#f7f7f8}' +
+      '.talk-to-human{background:none;border:none;color:' +
+      color +
+      ';font-size:12px;font-weight:600;cursor:pointer;padding:10px 8px;min-height:44px;text-decoration:underline}' +
+      '.handoff-view{display:none;flex-direction:column;flex:1;min-height:0}' +
+      '.handoff-view.open{display:flex}' +
+      '.handoff-form{display:none;flex-direction:column;flex:1;min-height:0;overflow-y:auto;padding:14px;gap:8px}' +
+      '.handoff-form.open{display:flex}' +
+      '.handoff-intro{font-size:12px;color:#555;margin:0 0 4px;line-height:1.4}' +
+      '.handoff-form label{font-size:12px;font-weight:600;color:#333}' +
+      '.handoff-form input[type=text],.handoff-form input[type=email],.handoff-form input[type=tel],.handoff-form textarea{' +
+      'width:100%;border:1px solid #ddd;border-radius:10px;padding:10px 12px;font-size:16px;outline:none;' +
+      'min-height:44px;font-family:inherit;background:#fff;color:#111}' +
+      '.handoff-form textarea{min-height:72px;resize:vertical}' +
+      '.handoff-form .consent{display:flex;align-items:center;gap:8px;min-height:44px;font-size:12px;font-weight:400;color:#444}' +
+      '.handoff-form .consent input{width:18px;height:18px;flex-shrink:0}' +
+      '.handoff-form .error{color:#d33;font-size:12px;min-height:16px;margin:0}' +
+      '.handoff-form .actions{display:flex;gap:8px;margin-top:4px;padding-bottom:env(safe-area-inset-bottom)}' +
+      '.handoff-form .actions button{min-height:44px;border-radius:9999px;border:none;cursor:pointer;font-size:13px;font-weight:600}' +
+      '.handoff-form .submit{flex:1;background:' +
+      color +
+      ';color:#fff}' +
+      '.handoff-form .submit:disabled{opacity:.6;cursor:default}' +
+      '.handoff-form .cancel{background:#eee;color:#333;padding:0 18px}' +
+      '.handoff-success{display:none;flex-direction:column;align-items:center;justify-content:center;' +
+      'flex:1;min-height:0;padding:24px;text-align:center;gap:14px}' +
+      '.handoff-success.open{display:flex}' +
+      '.handoff-success p{font-size:13px;color:#333;margin:0;line-height:1.5}' +
+      '.handoff-success button{min-height:44px;border-radius:9999px;border:none;cursor:pointer;font-size:13px;font-weight:600;background:' +
+      color +
+      ';color:#fff;padding:0 20px}';
     root.appendChild(style);
 
     var launcher = document.createElement('button');
@@ -263,16 +304,48 @@
       '<svg viewBox="0 0 24 24"><path d="M12 2C6.48 2 2 6.03 2 11c0 2.4 1.1 4.57 2.9 6.17-.15 1.15-.6 2.33-1.35 3.33a.5.5 0 0 0 .55.78c1.7-.4 3.2-1.15 4.35-1.95A11.6 11.6 0 0 0 12 20c5.52 0 10-4.03 10-9s-4.48-9-10-9z"/></svg>';
     root.appendChild(launcher);
 
+    var handoffEnabled = config.humanHandoffEnabled === true;
+
     var panel = document.createElement('div');
     panel.className = 'panel';
     panel.innerHTML =
       '<div class="header"><span></span><button class="close" type="button" aria-label="Close chat">✕</button></div>' +
+      '<div class="chat-view open">' +
       '<div class="messages" role="log" aria-live="polite"></div>' +
+      (handoffEnabled
+        ? '<div class="handoff-trigger"><button type="button" class="talk-to-human">Talk to a person</button></div>'
+        : '') +
       '<div class="composer">' +
       '<input type="text" placeholder="Type a message…" aria-label="Message" />' +
       '<button type="button" aria-label="Send">' +
       '<svg viewBox="0 0 24 24" width="16" height="16" fill="#fff"><path d="M2 21l21-9L2 3v7l15 2-15 2z"/></svg>' +
-      '</button></div>';
+      '</button></div>' +
+      '</div>' +
+      (handoffEnabled
+        ? '<div class="handoff-view">' +
+          '<form class="handoff-form open" novalidate>' +
+          '<p class="handoff-intro">Share your details and we’ll pass them straight to the team — someone will get back to you.</p>' +
+          '<label for="ai-r-handoff-name">Name</label>' +
+          '<input id="ai-r-handoff-name" type="text" name="name" autocomplete="name" maxlength="200" />' +
+          '<label for="ai-r-handoff-email">Email</label>' +
+          '<input id="ai-r-handoff-email" type="email" name="email" autocomplete="email" maxlength="320" />' +
+          '<label for="ai-r-handoff-phone">Phone</label>' +
+          '<input id="ai-r-handoff-phone" type="tel" name="phone" autocomplete="tel" maxlength="320" />' +
+          '<label for="ai-r-handoff-message">What can we help with? (optional)</label>' +
+          '<textarea id="ai-r-handoff-message" name="message" maxlength="1000"></textarea>' +
+          '<label class="consent"><input type="checkbox" name="consent" /><span>I agree to be contacted about my request.</span></label>' +
+          '<p class="error" role="alert"></p>' +
+          '<div class="actions">' +
+          '<button type="button" class="cancel">Back</button>' +
+          '<button type="submit" class="submit">Send</button>' +
+          '</div>' +
+          '</form>' +
+          '<div class="handoff-success">' +
+          '<p></p>' +
+          '<button type="button" class="back-to-chat">Back to chat</button>' +
+          '</div>' +
+          '</div>'
+        : '');
     root.appendChild(panel);
 
     panel.querySelector('.header span').textContent = config.title || 'Chat with us';
@@ -280,6 +353,15 @@
     var input = panel.querySelector('input');
     var sendButton = panel.querySelector('.composer button');
     var closeButton = panel.querySelector('.close');
+    var chatView = panel.querySelector('.chat-view');
+    var talkToHumanButton = handoffEnabled ? panel.querySelector('.talk-to-human') : null;
+    var handoffView = handoffEnabled ? panel.querySelector('.handoff-view') : null;
+    var handoffForm = handoffEnabled ? panel.querySelector('.handoff-form') : null;
+    var handoffSuccessEl = handoffEnabled ? panel.querySelector('.handoff-success') : null;
+    var handoffErrorEl = handoffEnabled ? panel.querySelector('.handoff-form .error') : null;
+    var handoffSubmitButton = handoffEnabled ? panel.querySelector('.handoff-form .submit') : null;
+    var handoffCancelButton = handoffEnabled ? panel.querySelector('.handoff-form .cancel') : null;
+    var handoffBackButton = handoffEnabled ? panel.querySelector('.back-to-chat') : null;
 
     var visitorId = getOrCreateVisitorId();
     var conversationId = null;
@@ -347,6 +429,164 @@
           sendButton.disabled = false;
           input.focus();
         });
+    }
+
+    // ---- "Talk to a person" — visitor-side human handoff ----
+    //
+    // A client-generated idempotency key (see
+    // src/lib/public-widget/schemas.ts's clientRequestIdSchema and
+    // supabase/migrations/20260918090000_handoff_idempotency.sql),
+    // deliberately kept in memory only — never in localStorage, unlike
+    // visitorId/conversationId/sessionToken above. Generated once, the
+    // first time the visitor actually attempts to submit, and reused for
+    // every retry of that same attempt (a recoverable error or a network
+    // failure) so a resend never creates a second lead or handoff. A
+    // fresh page load (or simply never opening the form) never needs
+    // one at all.
+    var handoffClientRequestId = null;
+    var handoffSubmitting = false;
+    var handoffSubmitted = false;
+
+    var HANDOFF_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    var HANDOFF_PHONE_SHAPE_PATTERN = /^[0-9+\s().-]{7,32}$/;
+
+    function isPlausibleHandoffEmail(value) {
+      return value.length > 0 && value.length <= 320 && HANDOFF_EMAIL_PATTERN.test(value);
+    }
+
+    function isPlausibleHandoffPhone(value) {
+      if (!HANDOFF_PHONE_SHAPE_PATTERN.test(value)) return false;
+      return value.replace(/\D/g, '').length >= 7;
+    }
+
+    function ensureHandoffClientRequestId() {
+      if (!handoffClientRequestId) {
+        handoffClientRequestId =
+          window.crypto && window.crypto.randomUUID
+            ? window.crypto.randomUUID()
+            : 'handoff_' + Date.now() + '_' + Math.random().toString(36).slice(2, 10);
+      }
+      return handoffClientRequestId;
+    }
+
+    function showChatView() {
+      if (handoffView) handoffView.classList.remove('open');
+      chatView.classList.add('open');
+    }
+
+    function showHandoffView() {
+      chatView.classList.remove('open');
+      handoffView.classList.add('open');
+      if (handoffSubmitted) {
+        handoffForm.classList.remove('open');
+        handoffSuccessEl.classList.add('open');
+      } else {
+        handoffSuccessEl.classList.remove('open');
+        handoffForm.classList.add('open');
+        handoffForm.querySelector('input[name="name"]').focus();
+      }
+    }
+
+    function setHandoffError(message) {
+      handoffErrorEl.textContent = message || '';
+    }
+
+    function setHandoffSubmitting(isSubmitting) {
+      handoffSubmitting = isSubmitting;
+      handoffSubmitButton.disabled = isSubmitting;
+      handoffCancelButton.disabled = isSubmitting;
+      handoffSubmitButton.textContent = isSubmitting ? 'Sending…' : 'Send';
+    }
+
+    function submitHandoffForm(event) {
+      event.preventDefault();
+      // Already submitting (a double-click/double-tap on the submit
+      // button), already succeeded (nothing left to send), or no
+      // conversation to attach this to yet — never sends a second
+      // request in any of those cases.
+      if (handoffSubmitting || handoffSubmitted || !conversationId) return;
+
+      var name = handoffForm.querySelector('input[name="name"]').value.trim();
+      var email = handoffForm.querySelector('input[name="email"]').value.trim();
+      var phone = handoffForm.querySelector('input[name="phone"]').value.trim();
+      var message = handoffForm.querySelector('textarea[name="message"]').value.trim();
+      var consent = handoffForm.querySelector('input[name="consent"]').checked;
+
+      if (!name) return setHandoffError('Please enter your name.');
+      if (name.length > 200) return setHandoffError('Keep your name under 200 characters.');
+      if (!email && !phone) return setHandoffError('Enter an email address or phone number.');
+      if (email && !isPlausibleHandoffEmail(email)) {
+        return setHandoffError('Enter a valid email address.');
+      }
+      if (phone && !isPlausibleHandoffPhone(phone)) {
+        return setHandoffError('Enter a valid phone number.');
+      }
+      if (message.length > 1000) return setHandoffError('Keep your message under 1000 characters.');
+      if (!consent) return setHandoffError('Please confirm you agree to be contacted.');
+
+      setHandoffError('');
+      setHandoffSubmitting(true);
+
+      postJson('/api/public-widget/handoff', {
+        publicWidgetId: widgetId,
+        visitorId: visitorId,
+        conversationId: conversationId,
+        sessionToken: getStoredSessionToken(),
+        clientRequestId: ensureHandoffClientRequestId(),
+        name: name,
+        email: email || undefined,
+        phone: phone || undefined,
+        message: message || undefined,
+        consent: true
+      }).then(function (result) {
+        setHandoffSubmitting(false);
+
+        if (result.ok && result.data && result.data.success) {
+          handoffSubmitted = true;
+          handoffForm.classList.remove('open');
+          handoffSuccessEl.querySelector('p').textContent =
+            'Thanks — we’ve let the team know and someone will be in touch with you shortly.';
+          handoffSuccessEl.classList.add('open');
+          return;
+        }
+
+        // Every failure branch below leaves the form's own values and
+        // handoffClientRequestId untouched, so tapping "Send" again is a
+        // genuine retry of the exact same submission, not a new one.
+        if (result.data && result.data.enabled === false) {
+          setHandoffError(result.data.error || 'Talking to a person isn’t available right now.');
+          return;
+        }
+        if (result.status === 429) {
+          setHandoffError('Too many attempts. Please wait a moment and try again.');
+          return;
+        }
+        if (result.status === 401) {
+          setHandoffError('Your session has expired. Please refresh the page and try again.');
+          return;
+        }
+        setHandoffError(
+          (result.data && result.data.error) || 'Something went wrong. Please try again.'
+        );
+      });
+    }
+
+    if (handoffEnabled) {
+      talkToHumanButton.addEventListener('click', function () {
+        ensureSession().then(function () {
+          if (!conversationId) {
+            addBubble('assistant', 'Chat is temporarily unavailable. Please try again shortly.');
+            return;
+          }
+          showHandoffView();
+        });
+      });
+      handoffCancelButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        showChatView();
+      });
+      handoffBackButton.addEventListener('click', showChatView);
+      handoffForm.addEventListener('submit', submitHandoffForm);
     }
 
     var isOpen = false;
