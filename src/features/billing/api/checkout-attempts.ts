@@ -1,6 +1,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Paddle } from '@paddle/paddle-node-sdk';
 import { syncSubscriptionFromPaddle } from '@/lib/paddle/sync';
+import { logCheckoutDiagnostic } from './diagnostics';
 
 const UNIQUE_VIOLATION = '23505';
 const MAX_CLAIM_DEPTH = 3;
@@ -91,12 +92,17 @@ async function findPendingAttempt(
   service: SupabaseClient,
   businessId: string
 ): Promise<PendingAttemptRow | null> {
-  const { data } = await service
+  const { data, error } = await service
     .from('billing_checkout_attempts')
     .select('id, generation, paddle_transaction_id')
     .eq('business_id', businessId)
     .eq('status', 'pending')
     .maybeSingle();
+
+  if (error) {
+    logCheckoutDiagnostic('checkout_attempt_lookup', { supabaseErrorCode: error.code ?? null });
+  }
+
   return (data as PendingAttemptRow | null) ?? null;
 }
 
@@ -172,9 +178,11 @@ async function insertNewAttempt(
   if (error) {
     if (error.code === UNIQUE_VIOLATION) {
       // Lost a race that happened between the lookup and this insert —
-      // re-run the claim against whatever now exists.
+      // re-run the claim against whatever now exists. Expected under
+      // normal concurrency, not a failure worth a diagnostic log.
       return claimCheckoutAttempt(service, paddle, businessId, depth + 1);
     }
+    logCheckoutDiagnostic('checkout_attempt_insert', { supabaseErrorCode: error.code ?? null });
     return { kind: 'retry' };
   }
 

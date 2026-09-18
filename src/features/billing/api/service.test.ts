@@ -1,8 +1,13 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { verifyActiveBusiness } from './authorize';
-import { SESSION_EXPIRED_MESSAGE, NO_BUSINESS_ACCESS_MESSAGE } from './types';
+import {
+  GENERIC_BILLING_ERROR,
+  SESSION_EXPIRED_MESSAGE,
+  NO_BUSINESS_ACCESS_MESSAGE
+} from './types';
 import { fetchBillingStatus, openCustomerPortal, startCheckout } from './service';
+import { CHECKOUT_DIAGNOSTIC_LOG_PREFIX } from './diagnostics';
 
 vi.mock('./authorize', () => ({
   verifyActiveBusiness: vi.fn()
@@ -715,5 +720,144 @@ describe('fetchBillingStatus', () => {
     getPaddleClient.mockReturnValue(null);
 
     await expect(fetchBillingStatus('biz-1')).rejects.toThrow('Something went wrong');
+  });
+});
+
+describe('startCheckout — safe diagnostic logging', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  function loggedDiagnostics(): Array<Record<string, unknown>> {
+    return consoleErrorSpy.mock.calls
+      .filter((call: unknown[]) => call[0] === CHECKOUT_DIAGNOSTIC_LOG_PREFIX)
+      .map((call: unknown[]) => JSON.parse(call[1] as string));
+  }
+
+  it('logs a safe diagnostic for a customer lookup/create failure, and still returns only the generic error', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const create = vi.fn();
+    const list = vi.fn().mockImplementation(() => {
+      throw new Error('paddle customers.list unavailable');
+    });
+    getPaddleClient.mockReturnValue({
+      transactions: { create },
+      customers: { list, create: vi.fn() }
+    });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'error', error: GENERIC_BILLING_ERROR });
+    expect(create).not.toHaveBeenCalled();
+    const diagnostics = loggedDiagnostics();
+    expect(diagnostics).toEqual([{ stage: 'resolve_customer' }]);
+  });
+
+  it('logs a safe diagnostic for a transaction-creation failure, and still returns only the generic error', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const create = vi.fn().mockRejectedValue(new Error('paddle down'));
+    const list = vi.fn().mockReturnValue({ [Symbol.asyncIterator]: async function* () {} });
+    getPaddleClient.mockReturnValue({
+      transactions: { create },
+      customers: { list, create: vi.fn().mockResolvedValue({ id: 'ctm_new' }) }
+    });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'error', error: GENERIC_BILLING_ERROR });
+    const diagnostics = loggedDiagnostics();
+    expect(diagnostics).toEqual([{ stage: 'create_transaction' }]);
+  });
+
+  it('extracts the Paddle error code/type into the diagnostic when the SDK throws an ApiError', async () => {
+    const { ApiError } = await import('@paddle/paddle-node-sdk');
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const create = vi.fn().mockRejectedValue(
+      new ApiError(
+        {
+          type: 'request_error',
+          code: 'invalid_amount',
+          detail: 'The amount provided is invalid',
+          documentation_url: 'https://developer.paddle.com/errors/invalid_amount',
+          errors: undefined
+        },
+        null
+      )
+    );
+    const list = vi.fn().mockReturnValue({ [Symbol.asyncIterator]: async function* () {} });
+    getPaddleClient.mockReturnValue({
+      transactions: { create },
+      customers: { list, create: vi.fn().mockResolvedValue({ id: 'ctm_new' }) }
+    });
+
+    await startCheckout('biz-1');
+
+    expect(loggedDiagnostics()).toEqual([
+      {
+        stage: 'create_transaction',
+        paddleErrorCode: 'invalid_amount',
+        paddleErrorType: 'request_error'
+      }
+    ]);
+  });
+
+  it('logs a safe diagnostic when recordTransactionId fails to persist, but still reports success to the caller — the Paddle transaction is real either way', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const create = vi.fn().mockResolvedValue({ id: 'txn_1' });
+    const list = vi.fn().mockReturnValue({ [Symbol.asyncIterator]: async function* () {} });
+    getPaddleClient.mockReturnValue({
+      transactions: { create },
+      customers: { list, create: vi.fn().mockResolvedValue({ id: 'ctm_new' }) }
+    });
+    recordTransactionId.mockResolvedValue({ ok: false, reason: '53300' });
+
+    const result = await startCheckout('biz-1');
+
+    expect(result).toEqual({ status: 'ok', transactionId: 'txn_1' });
+    expect(loggedDiagnostics()).toEqual([
+      { stage: 'record_transaction_id', supabaseErrorCode: '53300' }
+    ]);
+  });
+
+  it('never logs the customer email, business id, or transaction id in any diagnostic it emits', async () => {
+    const from = vi.fn().mockReturnValueOnce(chainable({ data: null }));
+    mockVerifiedBusiness();
+    createSupabaseServiceRoleClient.mockReturnValue({ from } as unknown as SupabaseClient);
+    const create = vi
+      .fn()
+      .mockRejectedValue(new Error('paddle down, txn would have been txn_secret_123'));
+    const list = vi.fn().mockImplementation(() => {
+      throw new Error('lookup failed for owner@example.com');
+    });
+    getPaddleClient.mockReturnValue({
+      transactions: { create },
+      customers: { list, create: vi.fn() }
+    });
+
+    await startCheckout(VERIFIED_BUSINESS_ID);
+
+    const allLoggedText = consoleErrorSpy.mock.calls
+      .map((call: unknown[]) =>
+        call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
+      )
+      .join('\n');
+
+    expect(allLoggedText).not.toContain('owner@example.com');
+    expect(allLoggedText).not.toContain('txn_secret_123');
+    expect(allLoggedText).not.toContain(VERIFIED_BUSINESS_ID);
   });
 });
