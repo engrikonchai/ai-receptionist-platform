@@ -7,6 +7,7 @@ import { getPaddleClient, getPaddleEnvironment, getPaddlePriceId } from '@/lib/p
 import { claimCheckoutAttempt, recordTransactionId } from './checkout-attempts';
 import { verifyActiveBusiness } from './authorize';
 import { GENERIC_BILLING_ERROR } from './types';
+import { extractPaddleErrorDetails, logCheckoutDiagnostic } from './diagnostics';
 import type {
   BillingPlan,
   BillingStatusResult,
@@ -236,29 +237,42 @@ export async function startCheckout(businessId: string): Promise<StartCheckoutRe
   // claim.kind is now narrowed to 'new' — this call, and only this
   // call, may create a Paddle transaction.
 
+  let customerId: string;
   try {
-    const customerId = await resolvePaddleCustomerId(
+    customerId = await resolvePaddleCustomerId(
       paddle,
       user.email,
       existing?.paddle_customer_id ?? null
     );
+  } catch (error) {
+    logCheckoutDiagnostic('resolve_customer', extractPaddleErrorDetails(error));
+    return { status: 'error', error: GENERIC_BILLING_ERROR };
+  }
 
-    const transaction = await paddle.transactions.create({
+  let transaction: Awaited<ReturnType<Paddle['transactions']['create']>>;
+  try {
+    transaction = await paddle.transactions.create({
       items: [{ priceId, quantity: 1 }],
       customerId,
       customData: { business_id: verifiedId, billing_generation: claim.generation }
     });
-
-    // The transaction is valid and usable regardless of whether this
-    // write succeeds — recordTransactionId()'s typed result exists so a
-    // FUTURE claim (a second tab, a retry) can tell the DB never
-    // durably recorded it and report `retry` rather than falsely
-    // reusing an unrecorded id. See checkout-attempts.ts.
-    await recordTransactionId(service, claim.attemptId, transaction.id);
-    return { status: 'ok', transactionId: transaction.id };
-  } catch {
+  } catch (error) {
+    logCheckoutDiagnostic('create_transaction', extractPaddleErrorDetails(error));
     return { status: 'error', error: GENERIC_BILLING_ERROR };
   }
+
+  // The transaction is valid and usable regardless of whether this
+  // write succeeds — recordTransactionId()'s typed result exists so a
+  // FUTURE claim (a second tab, a retry) can tell the DB never
+  // durably recorded it and report `retry` rather than falsely
+  // reusing an unrecorded id. See checkout-attempts.ts. Its failure is
+  // only ever logged, never surfaced to the caller: the transaction
+  // Paddle just created is still real and usable either way.
+  const recordResult = await recordTransactionId(service, claim.attemptId, transaction.id);
+  if (!recordResult.ok) {
+    logCheckoutDiagnostic('record_transaction_id', { supabaseErrorCode: recordResult.reason });
+  }
+  return { status: 'ok', transactionId: transaction.id };
 }
 
 /**

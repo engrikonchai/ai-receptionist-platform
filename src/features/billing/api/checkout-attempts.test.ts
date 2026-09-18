@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import type { Paddle } from '@paddle/paddle-node-sdk';
 import { claimCheckoutAttempt, recordTransactionId } from './checkout-attempts';
+import { CHECKOUT_DIAGNOSTIC_LOG_PREFIX } from './diagnostics';
 
 const syncSubscriptionFromPaddle = vi.fn();
 vi.mock('@/lib/paddle/sync', () => ({
@@ -334,5 +335,127 @@ describe('recordTransactionId', () => {
     const result = await recordTransactionId(service, 'attempt-1', 'txn_ok');
 
     expect(result).toEqual({ ok: false, reason: '53300' });
+  });
+});
+
+describe('claimCheckoutAttempt — safe diagnostic logging for checkout-attempt table failures', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  function loggedDiagnostics(): Array<Record<string, unknown>> {
+    return consoleErrorSpy.mock.calls
+      .filter((call: unknown[]) => call[0] === CHECKOUT_DIAGNOSTIC_LOG_PREFIX)
+      .map((call: unknown[]) => JSON.parse(call[1] as string));
+  }
+
+  it('logs a safe diagnostic when the pending-attempt lookup itself fails, and still falls through to the same behavior as "no pending attempt"', async () => {
+    // The lookup (select) fails, but insert behaves normally — proving
+    // the lookup error is treated exactly like "no pending attempt
+    // found" (data is null either way), never a new control-flow
+    // branch, while still being logged.
+    const { service: workingService } = fakeCheckoutAttemptsClient();
+    const failingFrom = vi.fn((table: string) => {
+      const real = (workingService as unknown as { from: (t: string) => unknown }).from(table);
+      return {
+        ...(real as object),
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({
+                  data: null,
+                  error: { code: '57014', message: 'canceling statement due to statement timeout' }
+                })
+            })
+          })
+        })
+      };
+    });
+    const service = { from: failingFrom } as unknown as SupabaseClient;
+    const { paddle } = fakePaddle({});
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim.kind).toBe('new');
+    expect(loggedDiagnostics()).toEqual([
+      { stage: 'checkout_attempt_lookup', supabaseErrorCode: '57014' }
+    ]);
+  });
+
+  it('logs a safe diagnostic for a genuine (non-race) insert failure', async () => {
+    const failingFrom = vi.fn().mockReturnValue({
+      select: () => ({
+        eq: () => ({
+          eq: () => ({ maybeSingle: () => Promise.resolve({ data: null, error: null }) })
+        })
+      }),
+      insert: () => ({
+        select: () => ({
+          single: () =>
+            Promise.resolve({
+              data: null,
+              error: { code: '53300', message: 'too many connections' }
+            })
+        })
+      })
+    });
+    const service = { from: failingFrom } as unknown as SupabaseClient;
+    const { paddle } = fakePaddle({});
+
+    const claim = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(claim).toEqual({ kind: 'retry' });
+    expect(loggedDiagnostics()).toEqual([
+      { stage: 'checkout_attempt_insert', supabaseErrorCode: '53300' }
+    ]);
+  });
+
+  it('never logs a diagnostic for the expected unique-violation race — that is normal concurrency, not a failure', async () => {
+    const { service } = fakeCheckoutAttemptsClient();
+    const { paddle } = fakePaddle({});
+
+    const first = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+    const second = await claimCheckoutAttempt(service, paddle, BUSINESS_ID);
+
+    expect(first.kind).toBe('new');
+    expect(second).toEqual({ kind: 'retry' });
+    expect(loggedDiagnostics()).toEqual([]);
+  });
+
+  it('never includes the business id in any logged diagnostic', async () => {
+    const secretBusinessId = 'biz-super-secret-id';
+    const { service: workingService } = fakeCheckoutAttemptsClient();
+    const failingFrom = vi.fn((table: string) => {
+      const real = (workingService as unknown as { from: (t: string) => unknown }).from(table);
+      return {
+        ...(real as object),
+        select: () => ({
+          eq: () => ({
+            eq: () => ({
+              maybeSingle: () =>
+                Promise.resolve({ data: null, error: { code: '57014', message: 'timeout' } })
+            })
+          })
+        })
+      };
+    });
+    const service = { from: failingFrom } as unknown as SupabaseClient;
+    const { paddle } = fakePaddle({});
+
+    await claimCheckoutAttempt(service, paddle, secretBusinessId);
+
+    const allLoggedText = consoleErrorSpy.mock.calls
+      .map((call: unknown[]) =>
+        call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
+      )
+      .join('\n');
+    expect(allLoggedText).not.toContain(secretBusinessId);
   });
 });
