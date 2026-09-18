@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { POST } from './route';
+import { WEBHOOK_SIGNATURE_DIAGNOSTIC_LOG_PREFIX } from '@/lib/paddle/webhook-signature-diagnostics';
 
 const unmarshal = vi.fn();
 const subscriptionsGet = vi.fn();
@@ -116,6 +117,102 @@ describe('POST /api/paddle/webhook — configuration and signature', () => {
     const response = await POST(request('{}'));
 
     expect(response.status).toBe(503);
+  });
+});
+
+describe('POST /api/paddle/webhook — safe signature-failure diagnostics', () => {
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    consoleErrorSpy.mockRestore();
+  });
+
+  function loggedDiagnostics(): Array<Record<string, unknown>> {
+    return consoleErrorSpy.mock.calls
+      .filter((call: unknown[]) => call[0] === WEBHOOK_SIGNATURE_DIAGNOSTIC_LOG_PREFIX)
+      .map((call: unknown[]) => JSON.parse(call[1] as string));
+  }
+
+  it('classifies and logs a malformed signature header — the response stays the generic 400 either way', async () => {
+    unmarshal.mockRejectedValue(new Error('[Paddle] Invalid webhook signature'));
+
+    const response = await POST(request('{}', 'not-a-valid-header-format'));
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Invalid signature.');
+    expect(loggedDiagnostics()).toEqual([{ reason: 'malformed_signature_header' }]);
+  });
+
+  it('classifies and logs a stale timestamp — the response stays the generic 400, never revealing why', async () => {
+    unmarshal.mockRejectedValue(new Error('[Paddle] Webhook signature verification failed'));
+    const staleTs = Math.floor(Date.now() / 1000) - 120;
+
+    const response = await POST(request('{}', `ts=${staleTs};h1=deadbeef`));
+
+    expect(response.status).toBe(400);
+    expect(await response.text()).toBe('Invalid signature.');
+    const diagnostics = loggedDiagnostics();
+    expect(diagnostics).toHaveLength(1);
+    expect(diagnostics[0]!.reason).toBe('timestamp_rejected');
+    expect(diagnostics[0]!.ageSeconds).toBeGreaterThan(5);
+  });
+
+  it('classifies and logs a genuine signature mismatch (fresh timestamp, bad HMAC) — the same generic 400', async () => {
+    unmarshal.mockRejectedValue(new Error('[Paddle] Webhook signature verification failed'));
+    const freshTs = Math.floor(Date.now() / 1000);
+
+    const response = await POST(request('{}', `ts=${freshTs};h1=wronghmac`));
+
+    expect(response.status).toBe(400);
+    expect(loggedDiagnostics()).toEqual([
+      { reason: 'signature_mismatch', ageSeconds: expect.any(Number) }
+    ]);
+  });
+
+  it('classifies and logs an event-parsing failure when the signature is genuinely valid but the body is not JSON', async () => {
+    unmarshal.mockRejectedValue(new SyntaxError('Unexpected token in JSON'));
+
+    const response = await POST(request('not valid json at all'));
+
+    expect(response.status).toBe(400);
+    expect(loggedDiagnostics()).toEqual([{ reason: 'event_parse_failed' }]);
+  });
+
+  it('classifies and logs an unrecognized failure as unknown, never guessing a specific cause', async () => {
+    unmarshal.mockRejectedValue(new Error('some future SDK error this app has never seen'));
+
+    const response = await POST(request('{}'));
+
+    expect(response.status).toBe(400);
+    expect(loggedDiagnostics()).toEqual([{ reason: 'unknown_verification_failure' }]);
+  });
+
+  it("never logs the signature header, the raw body, or the caught error's own message", async () => {
+    unmarshal.mockRejectedValue(new Error('[Paddle] Webhook signature verification failed'));
+    const secretLookingBody = '{"customer_email":"owner@example.com","business_id":"biz-secret-1"}';
+
+    await POST(request(secretLookingBody, 'ts=1;h1=totally-secret-hmac-value'));
+
+    const allLoggedText = consoleErrorSpy.mock.calls
+      .map((call: unknown[]) =>
+        call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
+      )
+      .join('\n');
+    expect(allLoggedText).not.toContain('totally-secret-hmac-value');
+    expect(allLoggedText).not.toContain('owner@example.com');
+    expect(allLoggedText).not.toContain('biz-secret-1');
+  });
+
+  it('never processes the event or touches the database when the signature fails, for any classification', async () => {
+    unmarshal.mockRejectedValue(new Error('[Paddle] Webhook signature verification failed'));
+
+    await POST(request('{}'));
+
+    expect(createSupabaseServiceRoleClient).not.toHaveBeenCalled();
   });
 });
 
