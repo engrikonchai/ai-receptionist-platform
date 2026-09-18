@@ -61,8 +61,13 @@ describe('paddle billing foundation migration — static contract', () => {
     }
   });
 
-  it('never references Stripe anywhere in the migration', () => {
-    expect(sql.toLowerCase()).not.toMatch(/stripe/);
+  it('never references Stripe in executable SQL — only in `--` comments explaining the legacy state this migration must not touch', () => {
+    const executableSql = sql
+      .split('\n')
+      .filter((line) => !/^\s*--/.test(line))
+      .join('\n');
+
+    expect(executableSql.toLowerCase()).not.toMatch(/stripe/);
   });
 
   it('derives has_paddle_customer as a stored generated column instead of exposing the raw id', () => {
@@ -314,5 +319,284 @@ describe('paddle billing foundation migration — static contract', () => {
     expect(sql).toMatch(
       /drop policy if exists "business_subscriptions_select_own" on public\.business_subscriptions;/
     );
+  });
+});
+
+/**
+ * Regression coverage for the exact production failure this migration
+ * was corrected for:
+ *
+ *   ERROR 42703: column "paddle_price_id" of relation
+ *   "business_subscriptions" does not exist
+ *
+ * Root cause: `create table if not exists` is a silent no-op against a
+ * pre-existing table (the older Stripe-era business_subscriptions —
+ * see supabase/migrations/20260919090000_business_subscriptions.sql,
+ * which a manual/partial run may already have executed against the
+ * database this migration now targets), so every column the CREATE
+ * TABLE declares inline is NOT guaranteed to actually exist. Every test
+ * below is a purely static/structural check of the SQL text (this repo
+ * has no live Postgres instance to run these DDL statements against —
+ * see this file's own top-of-file doc comment), but each one would
+ * fail if the specific explicit-upgrade statement it checks for were
+ * ever removed or reordered incorrectly, which is exactly the class of
+ * regression that produced the original failure.
+ */
+describe('paddle billing foundation migration — existing-table upgrade / partial-run recovery', () => {
+  const businessSubscriptionsColumns = [
+    'paddle_customer_id',
+    'paddle_subscription_id',
+    'paddle_transaction_id',
+    'paddle_subscription_created_at',
+    'paddle_event_occurred_at',
+    'billing_generation',
+    'paddle_price_id',
+    'trial_start',
+    'trial_end',
+    'trial_used_at',
+    'current_period_start',
+    'current_period_end',
+    'cancel_at_period_end',
+    'canceled_at',
+    'created_at',
+    'updated_at',
+    'has_paddle_customer'
+  ];
+
+  it('adds every Paddle/new business_subscriptions column via an explicit ADD COLUMN IF NOT EXISTS, for existing-table upgrade', () => {
+    for (const column of businessSubscriptionsColumns) {
+      const addColumnRegex = new RegExp(
+        `alter table public\\.business_subscriptions\\s*\\n\\s*add column if not exists ${column}\\b`
+      );
+      expect(sql).toMatch(addColumnRegex);
+    }
+  });
+
+  it('would have caught the exact paddle_price_id failure: every column referenced in the authenticated GRANT has its own explicit ADD COLUMN IF NOT EXISTS', () => {
+    const grantMatch = sql.match(
+      /grant select \(([\s\S]*?)\) on public\.business_subscriptions to authenticated;/
+    );
+    expect(grantMatch).not.toBeNull();
+    const grantedColumns = grantMatch![1]
+      .split(',')
+      .map((c) => c.trim())
+      .filter(Boolean);
+
+    // id/business_id/status are guaranteed by every known CREATE TABLE
+    // shape this table has ever had (legacy Stripe-era included) —
+    // status is converged via the explicit backfill-then-constrain
+    // block instead of ADD COLUMN (see the "does not add status... as
+    // new columns" test below). Every OTHER granted column,
+    // paddle_price_id included, must have its own explicit ADD COLUMN
+    // upgrade path or this test fails exactly the way the real
+    // migration run did.
+    const guaranteedByAnySchema = new Set(['id', 'business_id', 'status']);
+
+    for (const column of grantedColumns) {
+      if (guaranteedByAnySchema.has(column)) continue;
+      const addColumnRegex = new RegExp(
+        `alter table public\\.business_subscriptions\\s*\\n\\s*add column if not exists ${column}\\b`
+      );
+      expect(sql).toMatch(addColumnRegex);
+    }
+  });
+
+  it('adds every business_subscriptions column before the authenticated GRANT, the status CHECK constraint, and the uniqueness indexes ever reference it', () => {
+    const grantIndex = sql.indexOf(
+      'grant select (',
+      sql.indexOf('create table if not exists public.business_subscriptions')
+    );
+    expect(grantIndex).toBeGreaterThan(-1);
+
+    for (const column of businessSubscriptionsColumns) {
+      const addColumnIndex = sql.indexOf(`add column if not exists ${column}`);
+      expect(addColumnIndex).toBeGreaterThan(-1);
+      expect(addColumnIndex).toBeLessThan(grantIndex);
+    }
+  });
+
+  it('adds has_paddle_customer only after paddle_customer_id, the column its generated expression depends on', () => {
+    const customerIdIndex = sql.indexOf('add column if not exists paddle_customer_id text');
+    const hasCustomerIndex = sql.indexOf('add column if not exists has_paddle_customer boolean');
+    expect(customerIdIndex).toBeGreaterThan(-1);
+    expect(hasCustomerIndex).toBeGreaterThan(customerIdIndex);
+  });
+
+  it('does not add status as a new column — every known prior schema already has it, NOT NULL, from its own original CREATE TABLE', () => {
+    expect(sql).not.toMatch(/add column if not exists status\b/);
+  });
+
+  it('adds cancel_at_period_end/created_at/updated_at bare/nullable (never inline NOT NULL DEFAULT) and converges their default/NOT NULL separately', () => {
+    for (const column of ['cancel_at_period_end', 'created_at', 'updated_at']) {
+      expect(sql).toMatch(new RegExp(`add column if not exists ${column}\\b`));
+      expect(sql).not.toMatch(new RegExp(`add column if not exists ${column}\\b[^;]*not null`));
+    }
+  });
+
+  it('converges status/cancel_at_period_end/created_at/updated_at via an explicit backfill-then-constrain sequence, never a bare SET NOT NULL', () => {
+    const convergence: Array<{
+      column: string;
+      backfill: RegExp;
+      default: RegExp;
+      notNull: RegExp;
+    }> = [
+      {
+        column: 'status',
+        backfill:
+          /update public\.business_subscriptions set status = 'trialing' where status is null;/,
+        default:
+          /alter table public\.business_subscriptions alter column status set default 'trialing';/,
+        notNull: /alter table public\.business_subscriptions alter column status set not null;/
+      },
+      {
+        column: 'cancel_at_period_end',
+        backfill:
+          /update public\.business_subscriptions set cancel_at_period_end = false where cancel_at_period_end is null;/,
+        default:
+          /alter table public\.business_subscriptions alter column cancel_at_period_end set default false;/,
+        notNull:
+          /alter table public\.business_subscriptions alter column cancel_at_period_end set not null;/
+      },
+      {
+        column: 'created_at',
+        backfill:
+          /update public\.business_subscriptions set created_at = now\(\) where created_at is null;/,
+        default:
+          /alter table public\.business_subscriptions alter column created_at set default now\(\);/,
+        notNull: /alter table public\.business_subscriptions alter column created_at set not null;/
+      },
+      {
+        column: 'updated_at',
+        backfill:
+          /update public\.business_subscriptions set updated_at = now\(\) where updated_at is null;/,
+        default:
+          /alter table public\.business_subscriptions alter column updated_at set default now\(\);/,
+        notNull: /alter table public\.business_subscriptions alter column updated_at set not null;/
+      }
+    ];
+
+    for (const { column, backfill, default: defaultRegex, notNull } of convergence) {
+      const backfillMatch = sql.match(backfill);
+      const defaultMatch = sql.match(defaultRegex);
+      const notNullMatch = sql.match(notNull);
+      expect(backfillMatch, `missing backfill for ${column}`).not.toBeNull();
+      expect(defaultMatch, `missing default for ${column}`).not.toBeNull();
+      expect(notNullMatch, `missing not-null for ${column}`).not.toBeNull();
+
+      // Backfill (UPDATE ... WHERE col IS NULL) must run before SET NOT
+      // NULL, or an existing null value from an older schema could make
+      // this migration fail against real data.
+      expect(backfillMatch!.index).toBeLessThan(notNullMatch!.index!);
+    }
+  });
+
+  it('re-installs the Paddle status CHECK constraint explicitly (DROP IF EXISTS + ADD), not only via the CREATE TABLE inline form', () => {
+    expect(sql).toMatch(
+      /alter table public\.business_subscriptions\s*\n\s*drop constraint if exists business_subscriptions_status_check;/
+    );
+    expect(sql).toMatch(
+      /alter table public\.business_subscriptions\s*\n\s*add constraint business_subscriptions_status_check\s*\n\s*check \(status in \('trialing', 'active', 'past_due', 'paused', 'canceled'\)\);/
+    );
+
+    const dropIndex = sql.indexOf('drop constraint if exists business_subscriptions_status_check');
+    const addIndex = sql.indexOf('add constraint business_subscriptions_status_check', dropIndex);
+    expect(addIndex).toBeGreaterThan(dropIndex);
+  });
+
+  it('raises a clear diagnostic exception instead of an opaque constraint-violation when an existing row has a non-Paddle status', () => {
+    const doBlockIndex = sql.indexOf(
+      'do $$',
+      sql.indexOf('add column if not exists has_paddle_customer')
+    );
+    const dropConstraintIndex = sql.indexOf(
+      'drop constraint if exists business_subscriptions_status_check'
+    );
+    expect(doBlockIndex).toBeGreaterThan(-1);
+    expect(doBlockIndex).toBeLessThan(dropConstraintIndex);
+
+    const preCheckBlock = sql.slice(doBlockIndex, dropConstraintIndex);
+    expect(preCheckBlock).toMatch(
+      /where status not in \('trialing', 'active', 'past_due', 'paused', 'canceled'\);/
+    );
+    expect(preCheckBlock).toMatch(/raise exception/);
+    expect(preCheckBlock).not.toMatch(/\bdelete from\b/i);
+    expect(preCheckBlock).not.toMatch(/\bupdate\b/i);
+  });
+
+  it('installs business_id/paddle_customer_id/paddle_subscription_id unique indexes explicitly, using CREATE UNIQUE INDEX IF NOT EXISTS rather than relying on the CREATE TABLE inline form', () => {
+    expect(sql).toMatch(
+      /create unique index if not exists business_subscriptions_business_id_key\s*\n\s*on public\.business_subscriptions \(business_id\);/
+    );
+    expect(sql).toMatch(
+      /create unique index if not exists business_subscriptions_paddle_customer_id_key\s*\n\s*on public\.business_subscriptions \(paddle_customer_id\);/
+    );
+    expect(sql).toMatch(
+      /create unique index if not exists business_subscriptions_paddle_subscription_id_key\s*\n\s*on public\.business_subscriptions \(paddle_subscription_id\);/
+    );
+  });
+
+  it('raises a clear diagnostic instead of a bare unique-violation for each uniqueness index, and never merges or deletes a duplicate row itself', () => {
+    const columns: Array<{ column: string; indexName: string }> = [
+      { column: 'business_id', indexName: 'business_subscriptions_business_id_key' },
+      { column: 'paddle_customer_id', indexName: 'business_subscriptions_paddle_customer_id_key' },
+      {
+        column: 'paddle_subscription_id',
+        indexName: 'business_subscriptions_paddle_subscription_id_key'
+      }
+    ];
+
+    for (const { column, indexName } of columns) {
+      const indexStatement = `create unique index if not exists ${indexName}`;
+      const indexPos = sql.indexOf(indexStatement);
+      expect(indexPos, `missing unique index for ${column}`).toBeGreaterThan(-1);
+
+      // The nearest preceding `do $$ ... end $$;` block is this
+      // column's duplicate pre-check — it must exist, must come before
+      // the index it guards, must raise a clear exception, and must
+      // never itself delete or merge a row.
+      const doBlockStart = sql.lastIndexOf('do $$', indexPos);
+      expect(doBlockStart, `missing duplicate pre-check for ${column}`).toBeGreaterThan(-1);
+      const doBlockEnd = sql.indexOf('end $$;', doBlockStart);
+      expect(doBlockEnd).toBeLessThan(indexPos);
+
+      const preCheckBlock = sql.slice(doBlockStart, doBlockEnd);
+      expect(preCheckBlock).toMatch(new RegExp(`group by ${column}\\b`));
+      expect(preCheckBlock).toMatch(/having count\(\*\) > 1/);
+      expect(preCheckBlock).toMatch(/raise exception/);
+      expect(preCheckBlock).not.toMatch(/\bdelete from\b/i);
+      expect(preCheckBlock).not.toMatch(/\bupdate\b/i);
+    }
+  });
+
+  it('never creates a duplicate-equivalent index for the same column on a rerun — each uniqueness index is declared exactly once', () => {
+    for (const indexName of [
+      'business_subscriptions_business_id_key',
+      'business_subscriptions_paddle_customer_id_key',
+      'business_subscriptions_paddle_subscription_id_key'
+    ]) {
+      const matches =
+        sql.match(new RegExp(`create unique index if not exists ${indexName}\\b`, 'g')) ?? [];
+      expect(matches).toHaveLength(1);
+    }
+  });
+
+  it('upgrades billing_checkout_attempts the same way — adds paddle_transaction_id explicitly, since a Stripe-era table already exists under this name with stripe_checkout_session_id instead', () => {
+    const tableStart = sql.indexOf('create table if not exists public.billing_checkout_attempts');
+    const indexStart = sql.indexOf(
+      'create unique index if not exists billing_checkout_attempts_one_pending_per_business'
+    );
+    expect(tableStart).toBeGreaterThan(-1);
+    expect(indexStart).toBeGreaterThan(tableStart);
+
+    const upgradeSection = sql.slice(tableStart, indexStart);
+    expect(upgradeSection).toMatch(
+      /alter table public\.billing_checkout_attempts\s*\n\s*add column if not exists paddle_transaction_id text;/
+    );
+  });
+
+  it('never drops, deletes from, or truncates any legacy Stripe-era column or table — stripe_* columns and stripe_checkout_session_id are left in place untouched', () => {
+    expect(sql).not.toMatch(/\btruncate\b/i);
+    expect(sql).not.toMatch(/\bdelete from\b/i);
+    expect(sql).not.toMatch(/drop column/i);
   });
 });

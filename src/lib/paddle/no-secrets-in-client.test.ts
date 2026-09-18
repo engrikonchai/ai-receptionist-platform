@@ -84,13 +84,13 @@ describe('Paddle secrets never reach the browser', () => {
 });
 
 describe('no Stripe references remain anywhere in the app', () => {
-  it('contains no "stripe" text in application source, migrations, or documented environment variables', () => {
+  it('contains no "stripe" text in application source or documented environment variables', () => {
     // Excludes this file itself and the migration's own contract test —
     // both legitimately contain the word "stripe" as part of their own
     // negative-check assertions, never as a real reference.
     const targets = [
       ...listFiles(path.join(REPO_ROOT, 'src'), ['.ts', '.tsx']),
-      ...listFiles(path.join(REPO_ROOT, 'supabase', 'migrations'), ['.sql'])
+      path.join(REPO_ROOT, 'env.example.txt')
     ].filter(
       (file) =>
         !file.endsWith('paddle_billing_foundation.test.ts') &&
@@ -101,6 +101,30 @@ describe('no Stripe references remain anywhere in the app', () => {
     for (const file of targets) {
       const content = readFileSync(file, 'utf8');
       if (/stripe/i.test(content)) offenders.push(file);
+    }
+
+    expect(offenders).toEqual([]);
+  });
+
+  it('never references Stripe in EXECUTABLE SQL in any migration — only in `--` comments documenting legacy, untouched Stripe-era objects', () => {
+    // The Paddle billing foundation migration's corrective pass
+    // (20260920100000_paddle_billing_foundation.sql) legitimately
+    // documents the pre-existing Stripe-era business_subscriptions/
+    // billing_checkout_attempts tables it upgrades in place and must
+    // never drop — see that migration's own header comment and its
+    // own, more targeted version of this same check. Comments are
+    // therefore allowed to say "stripe"; no actual DDL statement ever
+    // may.
+    const files = listFiles(path.join(REPO_ROOT, 'supabase', 'migrations'), ['.sql']);
+
+    const offenders: string[] = [];
+    for (const file of files) {
+      const content = readFileSync(file, 'utf8');
+      const executable = content
+        .split('\n')
+        .filter((line) => !/^\s*--/.test(line))
+        .join('\n');
+      if (/stripe/i.test(executable)) offenders.push(file);
     }
 
     expect(offenders).toEqual([]);

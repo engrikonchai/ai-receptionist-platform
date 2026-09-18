@@ -8,6 +8,57 @@
 -- on the exact same, minimal privilege set. NOT executed as part of
 -- this branch — see the PR/report for the manual Supabase Dashboard
 -- steps and exact run order relative to the application deploy.
+--
+-- v2 CORRECTIVE PASS — existing-table upgrade. A manual run of the v1
+-- shape of this file against production failed with:
+--
+--   ERROR 42703: column "paddle_price_id" of relation
+--   "business_subscriptions" does not exist
+--
+-- Root cause: production already had a `business_subscriptions` table
+-- from the earlier, never-fully-adopted Stripe billing foundation (see
+-- supabase/migrations/20260919090000_business_subscriptions.sql, which
+-- this migration replaces). `create table if not exists` is a silent
+-- no-op against ANY pre-existing table of that name — it does NOT
+-- retrofit missing columns onto it. Every Paddle-named column this
+-- migration's inline `create table` declares was therefore never
+-- actually added, and the first later statement to reference one by
+-- name (the column-level GRANT SELECT for `authenticated`, which names
+-- paddle_price_id among its columns) failed.
+-- Everything before that GRANT in the v1 file order (the `comment on
+-- table`, `enable row level security`, `revoke all`) had already run
+-- and committed, leaving production in a partially-executed state.
+--
+-- This pass makes the WHOLE file safe to run, in order, from a clean
+-- slate; from that exact partially-executed state; from a pre-existing
+-- Stripe-era table; or repeatedly, by:
+--   1. Adding an explicit `alter table ... add column if not exists`
+--      for every Paddle column immediately after each `create table`,
+--      so no later statement can ever again reference a column that
+--      isn't guaranteed to exist yet — for BOTH business_subscriptions
+--      and billing_checkout_attempts (which has the exact same defect:
+--      a pre-existing Stripe-era table with `stripe_checkout_session_id`
+--      instead of `paddle_transaction_id`).
+--   2. Converging `status`/`cancel_at_period_end`/`created_at`/
+--      `updated_at` defaults and NOT NULL via an explicit, order-safe
+--      backfill-then-constrain sequence — never a bare `set not null`
+--      that could fail against a row an old schema left null.
+--   3. Re-installing the Paddle `status` CHECK constraint and the
+--      business_id/paddle_customer_id/paddle_subscription_id unique
+--      indexes explicitly (their CREATE TABLE inline forms are skipped
+--      exactly like every other inline clause when the table already
+--      exists), each preceded by a duplicate/violation pre-check that
+--      RAISES A CLEAR DIAGNOSTIC instead of either failing with an
+--      opaque constraint-violation error or silently deleting/merging
+--      any row.
+--
+-- Legacy `stripe_*` columns and `has_stripe_customer` (business_
+-- subscriptions) and `stripe_checkout_session_id` (billing_checkout_
+-- attempts) are deliberately left in place, untouched — see the note
+-- above section 1's existing-table upgrade block. They hold real
+-- historical data this pass must not lose; the Paddle application code
+-- simply never reads them. Dropping them is a separate, explicitly
+-- verified future cleanup migration, not this corrective pass.
 
 -- ---------------------------------------------------------------------
 -- 1. business_subscriptions — one row per business's Paddle
@@ -103,6 +154,227 @@ create table if not exists public.business_subscriptions (
     status in ('trialing', 'active', 'past_due', 'paused', 'canceled')
   )
 );
+
+-- ---------------------------------------------------------------------
+-- 1a. Existing-table upgrade. `create table if not exists` above is a
+--     silent no-op against ANY table already named `business_subscriptions`
+--     — including the older Stripe-era table (see this file's header
+--     comment) — and PostgreSQL never retrofits a skipped CREATE TABLE's
+--     columns onto a pre-existing table. Every column below must
+--     therefore be added explicitly, in an order that guarantees it
+--     exists before any later statement in this file references it by
+--     name (the column-level GRANT, the status CHECK constraint, the
+--     uniqueness indexes, and sync_business_subscription()). This is
+--     exactly the statement whose absence caused the original failure:
+--     `column "paddle_price_id" of relation "business_subscriptions"
+--     does not exist`. Every `add column if not exists` is idempotent
+--     and safe to rerun whether the table was just created fresh above,
+--     is the untouched legacy Stripe table, or already has some/all of
+--     these columns from an earlier partial run of this exact file.
+--
+--     `cancel_at_period_end`/`created_at`/`updated_at` are added here
+--     WITHOUT the `not null default ...` the fresh CREATE TABLE above
+--     declares inline — adding a NOT NULL column with a default via
+--     ALTER TABLE is safe on modern PostgreSQL, but this migration
+--     never relies on that; instead it adds each one bare/nullable here
+--     and converges its default and NOT NULL explicitly in 1b below via
+--     a backfill-then-constrain sequence, which can never fail against
+--     a row an older schema left null. `status` is NOT in this ADD
+--     COLUMN block at all — every known prior shape of this table
+--     (fresh, legacy Stripe-era, or partially upgraded) already has it,
+--     NOT NULL, from its own original CREATE TABLE; 1b converges its
+--     default the same safe way.
+-- ---------------------------------------------------------------------
+alter table public.business_subscriptions
+  add column if not exists paddle_customer_id text;
+alter table public.business_subscriptions
+  add column if not exists paddle_subscription_id text;
+alter table public.business_subscriptions
+  add column if not exists paddle_transaction_id text;
+alter table public.business_subscriptions
+  add column if not exists paddle_subscription_created_at timestamptz;
+alter table public.business_subscriptions
+  add column if not exists paddle_event_occurred_at timestamptz;
+alter table public.business_subscriptions
+  add column if not exists billing_generation bigint;
+alter table public.business_subscriptions
+  add column if not exists paddle_price_id text;
+alter table public.business_subscriptions
+  add column if not exists trial_start timestamptz;
+alter table public.business_subscriptions
+  add column if not exists trial_end timestamptz;
+alter table public.business_subscriptions
+  add column if not exists trial_used_at timestamptz;
+alter table public.business_subscriptions
+  add column if not exists current_period_start timestamptz;
+alter table public.business_subscriptions
+  add column if not exists current_period_end timestamptz;
+alter table public.business_subscriptions
+  add column if not exists cancel_at_period_end boolean;
+alter table public.business_subscriptions
+  add column if not exists canceled_at timestamptz;
+alter table public.business_subscriptions
+  add column if not exists created_at timestamptz;
+alter table public.business_subscriptions
+  add column if not exists updated_at timestamptz;
+-- Depends on paddle_customer_id, which the ADD COLUMN above guarantees
+-- exists by this point in the file.
+alter table public.business_subscriptions
+  add column if not exists has_paddle_customer boolean
+    generated always as (paddle_customer_id is not null) stored;
+
+-- ---------------------------------------------------------------------
+-- 1b. Defaults and NOT NULL convergence. An explicit backfill-then-
+--     constrain sequence for every column the application requires a
+--     default/NOT NULL for — safe against a row that predates this
+--     column being NOT NULL (there are none among the currently known
+--     schema shapes, but this makes that fact an enforced invariant
+--     rather than an assumption). `update ... where <col> is null`
+--     always affects zero rows once already backfilled, and
+--     `set default`/`set not null` are themselves idempotent — a rerun
+--     of this whole block is always a safe no-op once converged.
+-- ---------------------------------------------------------------------
+update public.business_subscriptions set status = 'trialing' where status is null;
+alter table public.business_subscriptions alter column status set default 'trialing';
+alter table public.business_subscriptions alter column status set not null;
+
+update public.business_subscriptions set cancel_at_period_end = false where cancel_at_period_end is null;
+alter table public.business_subscriptions alter column cancel_at_period_end set default false;
+alter table public.business_subscriptions alter column cancel_at_period_end set not null;
+
+update public.business_subscriptions set created_at = now() where created_at is null;
+alter table public.business_subscriptions alter column created_at set default now();
+alter table public.business_subscriptions alter column created_at set not null;
+
+update public.business_subscriptions set updated_at = now() where updated_at is null;
+alter table public.business_subscriptions alter column updated_at set default now();
+alter table public.business_subscriptions alter column updated_at set not null;
+
+-- ---------------------------------------------------------------------
+-- 1c. Paddle status CHECK constraint. The inline `constraint ... check`
+--     in the CREATE TABLE above is skipped exactly like every other
+--     inline clause when the table already exists, so it is
+--     (re)installed explicitly here — `drop constraint if exists` then
+--     `add constraint` is idempotent and converges to the exact same
+--     constraint on every rerun. A pre-existing Stripe-era row can
+--     carry a status value Paddle has no equivalent for (`incomplete`,
+--     `incomplete_expired`, `unpaid`) — adding this constraint against
+--     such a row would otherwise fail with an opaque constraint-
+--     violation error. This checks first and raises a clear, actionable
+--     diagnostic instead, and never deletes, rewrites, or reclassifies
+--     any row itself.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_bad_count integer;
+begin
+  select count(*) into v_bad_count
+  from public.business_subscriptions
+  where status not in ('trialing', 'active', 'past_due', 'paused', 'canceled');
+
+  if v_bad_count > 0 then
+    raise exception
+      'business_subscriptions has % row(s) with a status value outside the Paddle status vocabulary (trialing, active, past_due, paused, canceled) — likely a legacy pre-Paddle status this app no longer produces. Resolve these rows in a verified, explicit follow-up data migration before rerunning this migration; the Paddle status CHECK constraint cannot be safely applied while they exist.',
+      v_bad_count;
+  end if;
+end $$;
+
+alter table public.business_subscriptions
+  drop constraint if exists business_subscriptions_status_check;
+alter table public.business_subscriptions
+  add constraint business_subscriptions_status_check
+  check (status in ('trialing', 'active', 'past_due', 'paused', 'canceled'));
+
+-- ---------------------------------------------------------------------
+-- 1d. Uniqueness. business_id/paddle_customer_id/paddle_subscription_id
+--     each need a unique index — for sync_business_subscription()'s
+--     `on conflict (business_id)` upsert, and so a webhook can never
+--     accidentally attach one Paddle object to two different
+--     businesses' rows — but the CREATE TABLE's inline `unique` column
+--     constraints are skipped exactly like every other inline clause
+--     when the table already exists. Each index below is named after
+--     PostgreSQL's own default naming convention for a single-column
+--     UNIQUE constraint (`<table>_<column>_key`), so `create unique
+--     index if not exists` recognizes and no-ops against an
+--     already-existing constraint's backing index of that same name
+--     (a fresh install, or an already-fully-converged run of this exact
+--     file) — it only ever creates a genuinely new index, and never a
+--     duplicate, on a table that actually lacks one.
+--
+--     A duplicate value (more than one row sharing a business_id, or a
+--     non-null paddle_customer_id/paddle_subscription_id) would make
+--     the corresponding unique index impossible to create. This is
+--     checked explicitly first and raises a clear diagnostic instead of
+--     a bare unique-violation error — never merging or deleting a row
+--     itself.
+-- ---------------------------------------------------------------------
+do $$
+declare
+  v_dup_count integer;
+begin
+  select count(*) into v_dup_count
+  from (
+    select business_id
+    from public.business_subscriptions
+    group by business_id
+    having count(*) > 1
+  ) dupes;
+
+  if v_dup_count > 0 then
+    raise exception
+      'business_subscriptions has % business_id value(s) with more than one row — a unique business_id index cannot be safely applied while duplicates exist. Resolve (e.g. archive/merge the extra rows in a verified follow-up migration) before rerunning this migration.',
+      v_dup_count;
+  end if;
+end $$;
+
+create unique index if not exists business_subscriptions_business_id_key
+  on public.business_subscriptions (business_id);
+
+do $$
+declare
+  v_dup_count integer;
+begin
+  select count(*) into v_dup_count
+  from (
+    select paddle_customer_id
+    from public.business_subscriptions
+    where paddle_customer_id is not null
+    group by paddle_customer_id
+    having count(*) > 1
+  ) dupes;
+
+  if v_dup_count > 0 then
+    raise exception
+      'business_subscriptions has % paddle_customer_id value(s) shared by more than one row — a unique paddle_customer_id index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning this migration.',
+      v_dup_count;
+  end if;
+end $$;
+
+create unique index if not exists business_subscriptions_paddle_customer_id_key
+  on public.business_subscriptions (paddle_customer_id);
+
+do $$
+declare
+  v_dup_count integer;
+begin
+  select count(*) into v_dup_count
+  from (
+    select paddle_subscription_id
+    from public.business_subscriptions
+    where paddle_subscription_id is not null
+    group by paddle_subscription_id
+    having count(*) > 1
+  ) dupes;
+
+  if v_dup_count > 0 then
+    raise exception
+      'business_subscriptions has % paddle_subscription_id value(s) shared by more than one row — a unique paddle_subscription_id index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning this migration.',
+      v_dup_count;
+  end if;
+end $$;
+
+create unique index if not exists business_subscriptions_paddle_subscription_id_key
+  on public.business_subscriptions (paddle_subscription_id);
 
 comment on table public.business_subscriptions is
   'One row per business''s Paddle subscription lifecycle (src/features/billing/). status mirrors Paddle''s own subscription status values verbatim. Written only by the service-role key: the verified Paddle webhook handler (src/app/api/paddle/webhook/route.ts) via the sync_business_subscription() function, and the checkout/portal server actions'' own service-role reads/writes (src/features/billing/api/service.ts) — never directly by a dashboard request, and never via an authenticated client''s plain table write. Row is never deleted on cancellation; status moves to ''canceled'' and history is kept. paddle_customer_id/paddle_subscription_id/paddle_transaction_id are never selectable by `authenticated` — see the column-level grant below.';
@@ -392,6 +664,23 @@ create table if not exists public.billing_checkout_attempts (
     status in ('pending', 'completed', 'expired', 'abandoned')
   )
 );
+
+-- Existing-table upgrade — same defect as business_subscriptions above:
+-- a Stripe-era `billing_checkout_attempts` table already exists under
+-- this exact name with `stripe_checkout_session_id` instead of
+-- `paddle_transaction_id` (see this file's header comment), and
+-- `create table if not exists` silently skips it. Left unfixed, every
+-- Paddle checkout/webhook code path that reads or writes
+-- paddle_transaction_id (src/features/billing/api/checkout-attempts.ts)
+-- would fail against this table at runtime even though the migration
+-- itself would appear to have "succeeded." `generation` is repeated
+-- here too — defensive against an even older pre-existing shape of this
+-- table that predates it. `stripe_checkout_session_id` itself is left
+-- in place, untouched; see the header comment's note on legacy columns.
+alter table public.billing_checkout_attempts
+  add column if not exists paddle_transaction_id text;
+alter table public.billing_checkout_attempts
+  add column if not exists generation bigint generated always as identity;
 
 create unique index if not exists billing_checkout_attempts_one_pending_per_business
   on public.billing_checkout_attempts (business_id)
