@@ -4,6 +4,10 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { createSupabaseServiceRoleClient } from '@/lib/supabase/service-role';
 import { getPaddleClient, getPaddleWebhookSecret } from '@/lib/paddle/client';
 import { syncSubscriptionFromPaddle } from '@/lib/paddle/sync';
+import {
+  classifyWebhookVerificationFailure,
+  logWebhookSignatureFailure
+} from '@/lib/paddle/webhook-signature-diagnostics';
 
 /**
  * Paddle's own webhook signing requires the exact raw request bytes —
@@ -58,7 +62,15 @@ export async function POST(request: Request) {
     // a replayed/tampered request, or simply sandbox noise; none of
     // that is safe or useful to log verbatim.
     event = await paddle.webhooks.unmarshal(rawBody, webhookSecret, signature);
-  } catch {
+  } catch (error) {
+    // Classifies WHY, for Vercel logs only — see
+    // webhook-signature-diagnostics.ts's own doc comment for exactly
+    // how each category was derived from the installed SDK's source.
+    // The HTTP response below is deliberately identical for every
+    // category: an attacker (or Paddle itself) must never be able to
+    // distinguish "timestamp too old" from "wrong secret" from the
+    // response alone.
+    logWebhookSignatureFailure(classifyWebhookVerificationFailure(error, signature));
     return new Response('Invalid signature.', { status: 400 });
   }
 
