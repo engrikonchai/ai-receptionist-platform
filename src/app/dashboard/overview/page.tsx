@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { cookies } from 'next/headers';
 import PageContainer from '@/components/layout/page-container';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Icons } from '@/components/icons';
@@ -10,9 +11,11 @@ import {
   loadOwnerContext,
   resolveActiveBusinessId
 } from '@/lib/supabase/owner-context';
-import type { WidgetSettingsRow } from '@/lib/supabase/database.types';
+import type { BusinessSubscriptionRow, WidgetSettingsRow } from '@/lib/supabase/database.types';
+import { getPaddleEnvironment } from '@/lib/paddle/client';
 import { SetupChecklist } from '@/features/onboarding/components/setup-checklist';
 import { computeSetupProgress } from '@/features/onboarding/utils/setup-progress';
+import { formatDate, SUBSCRIPTION_STATUS_LABEL } from '@/features/billing/utils/format';
 
 export default async function OverviewPage() {
   const ctx = await loadOwnerContext();
@@ -48,11 +51,19 @@ export default async function OverviewPage() {
   // their own `error` (unlike the two counts above) so a failed fetch
   // can render as an explicit "could not load" state rather than
   // silently looking like zero — see the Leads & handoffs card below.
+  // The billing summary card only queries business_subscriptions when
+  // Paddle is actually configured — an unconfigured environment (e.g.
+  // this branch's own default state before real Paddle keys are added)
+  // never surfaces a "billing unavailable" error on the one page every
+  // owner sees first.
+  const paddleConfigured = getPaddleEnvironment() !== null;
+
   const [
     { data: widgetSettingsRow },
     { count: activeKnowledgeItemCount },
     { count: newLeadCount, error: newLeadCountError },
-    { count: pendingHandoffCount, error: pendingHandoffCountError }
+    { count: pendingHandoffCount, error: pendingHandoffCountError },
+    { data: subscriptionRow }
   ] = activeBusiness
     ? await Promise.all([
         ctx.supabase
@@ -74,11 +85,29 @@ export default async function OverviewPage() {
           .from('handoffs')
           .select('id', { count: 'exact', head: true })
           .eq('business_id', activeBusiness.id)
-          .eq('status', 'new')
+          .eq('status', 'new'),
+        paddleConfigured
+          ? ctx.supabase
+              .from('business_subscriptions')
+              .select('status, trial_end, current_period_end, cancel_at_period_end')
+              .eq('business_id', activeBusiness.id)
+              .maybeSingle()
+          : Promise.resolve({ data: null })
       ])
-    : [{ data: null }, { count: 0 }, { count: 0, error: null }, { count: 0, error: null }];
+    : [
+        { data: null },
+        { count: 0 },
+        { count: 0, error: null },
+        { count: 0, error: null },
+        { data: null }
+      ];
 
   const widget = widgetSettingsRow as WidgetSettingsRow | null;
+  const subscription = subscriptionRow as Pick<
+    BusinessSubscriptionRow,
+    'status' | 'trial_end' | 'current_period_end' | 'cancel_at_period_end'
+  > | null;
+  const hasPaymentProblem = subscription?.status === 'past_due';
 
   const setupProgress = activeBusiness
     ? computeSetupProgress({
@@ -164,6 +193,57 @@ export default async function OverviewPage() {
                   View inbox
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {activeBusiness && paddleConfigured && (
+          <Card>
+            <CardContent className='space-y-2 pt-6'>
+              <div className='flex items-center justify-between gap-2'>
+                <p className='text-foreground text-sm font-medium'>Billing</p>
+                {subscription && (
+                  <Badge variant={hasPaymentProblem ? 'destructive' : 'outline'}>
+                    {SUBSCRIPTION_STATUS_LABEL[subscription.status]}
+                  </Badge>
+                )}
+              </div>
+
+              {hasPaymentProblem && (
+                <p className='text-destructive text-sm'>
+                  There&apos;s a problem with your last payment.
+                </p>
+              )}
+
+              {subscription ? (
+                <>
+                  {subscription.status === 'trialing' && subscription.trial_end && (
+                    <p className='text-muted-foreground text-sm'>
+                      Trial ends {formatDate(subscription.trial_end)}.
+                    </p>
+                  )}
+                  {subscription.current_period_end && !hasPaymentProblem && (
+                    <p className='text-muted-foreground text-sm'>
+                      {subscription.cancel_at_period_end ? 'Access ends' : 'Renews'}{' '}
+                      {formatDate(subscription.current_period_end)}.
+                    </p>
+                  )}
+                </>
+              ) : (
+                <p className='text-muted-foreground text-sm'>
+                  Start your subscription to keep using the AI receptionist.
+                </p>
+              )}
+
+              <Button
+                size='sm'
+                variant='outline'
+                className='mt-1'
+                render={<Link href='/dashboard/billing' aria-label='Manage billing' />}
+              >
+                <Icons.billing className='size-4' aria-hidden='true' />
+                {subscription ? 'Manage billing' : 'View billing'}
+              </Button>
             </CardContent>
           </Card>
         )}

@@ -24,6 +24,8 @@
   "dependencies": {
     "@ai-sdk/react": "^4.0.47",
     "@base-ui/react": "^1.6.0",
+    "@paddle/paddle-js": "^1.6.5",
+    "@paddle/paddle-node-sdk": "^3.10.0",
     "@shadcn/helpers": "^0.1.0",
     "@shadcn/react": "^0.2.1",
     "@supabase/ssr": "^0.12.6",

@@ -16,9 +16,14 @@
  * (supabase/migrations/20260916120000_widget_allowed_origins.sql), and
  * `widget_settings.installation_confirmed` / `installation_confirmed_at`
  * (supabase/migrations/20260917140000_widget_installation_confirmed.sql
- * — confirmed applied), and `handoffs.client_request_id`
+ * — confirmed applied), `handoffs.client_request_id`
  * (supabase/migrations/20260918090000_handoff_idempotency.sql — NOT
- * applied yet) — see each file's header for why it's safe.
+ * applied yet), and the three brand-new tables
+ * `business_subscriptions` / `paddle_webhook_events` /
+ * `billing_checkout_attempts`, plus the `sync_business_subscription()`
+ * RPC
+ * (supabase/migrations/20260920100000_paddle_billing_foundation.sql —
+ * NOT applied yet) — see that file's header for why it's safe.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -192,4 +197,96 @@ export interface WidgetPublicConfigRpcResult {
   human_handoff_enabled: boolean;
   default_language: string;
   supported_languages: string[];
+}
+
+/**
+ * Mirrors Paddle's own subscription status values verbatim (see
+ * https://developer.paddle.com/api-reference/subscriptions/subscription-object)
+ * rather than a parallel vocabulary — the webhook handler
+ * (src/app/api/paddle/webhook/route.ts) never has to translate. A
+ * deliberately smaller set than a card-processor-style status enum:
+ * Paddle only ever creates a subscription once its first transaction
+ * has actually progressed, so there is no "incomplete" equivalent.
+ */
+export type BusinessSubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'paused' | 'canceled';
+
+/**
+ * One row per business's Paddle subscription lifecycle — see
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
+ * applied yet). Written only by the service-role key: the verified
+ * Paddle webhook handler via the sync_business_subscription() RPC, and
+ * the checkout/portal server actions' own service-role reads/writes
+ * (src/features/billing/api/service.ts) — never directly by a plain
+ * authenticated-client write. Row is never deleted on cancellation.
+ *
+ * `authenticated` can only SELECT a subset of these columns (see the
+ * migration's column-level grant) — paddle_customer_id,
+ * paddle_subscription_id, paddle_transaction_id,
+ * paddle_subscription_created_at, paddle_event_occurred_at, and
+ * billing_generation are never readable through that role; only
+ * service-role code (always gated by verifyActiveBusiness()) reads
+ * them.
+ */
+export interface BusinessSubscriptionRow {
+  id: string;
+  business_id: string;
+  paddle_customer_id: string | null;
+  paddle_subscription_id: string | null;
+  /** The most recently known Paddle transaction for this subscription — kept best-effort, never a stand-in for paddle_subscription_id. Not readable by `authenticated`. */
+  paddle_transaction_id: string | null;
+  /** Paddle's own subscription `created_at` — a second-precision fallback ordering key, used by sync_business_subscription() only when neither side has a billing_generation. Not readable by `authenticated`. */
+  paddle_subscription_created_at: string | null;
+  /** The `occurred_at` of the last webhook event that updated this row — guards against Paddle's own unordered delivery of events for the SAME subscription. Not readable by `authenticated`. */
+  paddle_event_occurred_at: string | null;
+  /** The billing_checkout_attempts.generation that produced this subscription — the primary, deterministic ordering key for comparing DIFFERENT subscriptions (no two attempts ever share one, unlike a Paddle timestamp). Null for a subscription that predates this column. Not readable by `authenticated`. */
+  billing_generation: number | null;
+  paddle_price_id: string | null;
+  status: BusinessSubscriptionStatus;
+  trial_start: string | null;
+  trial_end: string | null;
+  /** Immutable once set — the first time a subscription with a real trial period syncs for this business. Never cleared by a later sync, a resubscribe, or a duplicate/stale webhook. This app never requests or withholds a trial itself — Paddle decides trial eligibility per customer from the Price's own configuration; this column is only this app's durable record of what happened. */
+  trial_used_at: string | null;
+  current_period_start: string | null;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  canceled_at: string | null;
+  created_at: string;
+  updated_at: string;
+  /** Generated column (`paddle_customer_id is not null`) — the only customer-related fact `authenticated` may read. */
+  has_paddle_customer: boolean;
+}
+
+/**
+ * Durable Checkout-creation concurrency safety — at most one
+ * `status='pending'` row per business at a time (enforced by a unique
+ * partial index). See
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
+ * applied yet). Read and written only by the service-role key, from
+ * src/features/billing/api/checkout-attempts.ts, always after
+ * verifyActiveBusiness().
+ */
+export interface BillingCheckoutAttemptRow {
+  id: string;
+  business_id: string;
+  /** Strictly monotonic identity column — the deterministic ordering key copied onto business_subscriptions.billing_generation via Paddle custom_data. No two attempts ever share one. */
+  generation: number;
+  status: 'pending' | 'completed' | 'expired' | 'abandoned';
+  paddle_transaction_id: string | null;
+  created_at: string;
+  /** A best-effort LOCAL staleness bound only — Paddle transactions have no provider-enforced expiry of their own, so this never by itself decides an attempt is dead; see checkout-attempts.ts. */
+  expires_at: string;
+}
+
+/**
+ * Idempotency ledger for the Paddle webhook handler — one row per
+ * successfully processed Paddle event id. See
+ * supabase/migrations/20260920100000_paddle_billing_foundation.sql (NOT
+ * applied yet). Read and written only by the service-role key.
+ */
+export interface PaddleWebhookEventRow {
+  paddle_event_id: string;
+  event_type: string;
+  processed_at: string;
+  attempt_count: number;
+  last_error: string | null;
 }
