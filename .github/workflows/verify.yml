@@ -1,14 +1,17 @@
 name: Verify
 
-# Runs the same local verification suite (test/typecheck/lint/format/build)
-# on every pull request and every push to main. Deliberately requires and
-# exposes NO secrets — no Paddle, Supabase, or other production
+# Runs the same local verification suite (test/typecheck/lint/format/build/
+# e2e) on every pull request and every push to main. Deliberately requires
+# and exposes NO secrets — no Paddle, Supabase, or other production
 # credentials are configured here, and none are needed: every command
 # below (including `bun run build`) succeeds against this repository with
 # zero environment variables set, since every server-only integration in
 # this app (Supabase, Paddle) fails closed to a safe "not configured"
-# state rather than throwing when its env vars are absent. Never add a
-# production secret to this workflow.
+# state rather than throwing when its env vars are absent. The Playwright
+# suite (`bun run test:e2e`) builds and runs its own local server with
+# harmless placeholder Supabase values baked in by playwright.config.ts —
+# never a real credential, never a call to Paddle/Supabase or any other
+# external API. Never add a production secret to this workflow.
 on:
   pull_request:
   push:
@@ -29,11 +32,13 @@ concurrency:
 
 jobs:
   verify:
-    name: Test, typecheck, lint, format, build
+    name: Test, typecheck, lint, format, build, e2e
     runs-on: ubuntu-latest
-    # Generous but bounded — a cold-cache CI run of the full suite plus
-    # a production build is expected to finish well under this.
-    timeout-minutes: 15
+    # Generous but bounded — a cold-cache CI run of the full suite,
+    # including two production builds (one secret-free, one for the
+    # Playwright web server) and installing Chromium, is expected to
+    # finish well under this.
+    timeout-minutes: 25
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -65,3 +70,9 @@ jobs:
 
       - name: Production build
         run: bun run build
+
+      - name: Install Playwright Chromium
+        run: bunx playwright install --with-deps chromium
+
+      - name: Run end-to-end tests
+        run: bun run test:e2e

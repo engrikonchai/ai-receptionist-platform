@@ -25,7 +25,11 @@ export function AuthShell({
       <main className='flex flex-1 items-center justify-center p-4 pb-16'>
         <Card className='w-full max-w-sm'>
           <CardHeader>
-            <CardTitle className='text-xl'>{title}</CardTitle>
+            {/* CardTitle renders a <div> — every auth page needs a real
+                heading in the accessibility tree, not just large text. */}
+            <CardTitle className='text-xl' role='heading' aria-level={1}>
+              {title}
+            </CardTitle>
             <CardDescription>{description}</CardDescription>
           </CardHeader>
           <CardContent>{children}</CardContent>
