@@ -152,6 +152,36 @@ The app should now be running at http://localhost:3000.
 
 ---
 
+## Testing
+
+Unit/integration tests run on [Vitest](https://vitest.dev/):
+
+```bash
+bun run test          # run once
+bun run test:watch    # watch mode
+```
+
+### End-to-end tests (Playwright)
+
+Install Chromium once (only Chromium is used, so this is the only browser you need):
+
+```bash
+bunx playwright install chromium
+```
+
+Then run the suite:
+
+```bash
+bun run test:e2e       # headless, CLI output
+bun run test:e2e:ui    # Playwright's interactive UI mode
+```
+
+This builds the app and runs it on a fixed local port (see `playwright.config.ts`) — it never targets a deployed/production URL.
+
+The committed E2E suite (`e2e/`) is **intentionally secret-free**: it only covers flows that work without a real Supabase or Paddle project — the auth pages (`/login`, `/signup`, `/forgot-password`) loading and passing basic accessibility/responsive checks, `/dashboard/overview` redirecting safely to `/login` when signed out, and the static `/widget-loader.js` script serving correctly. It never signs in, signs up, or calls a real external API. Testing authenticated flows against a live Supabase/Paddle project is a separate, future E2E environment, not part of this suite.
+
+---
+
 ## Cleanup Script: Start Minimal in 60 Seconds
 
 Most starters make you hand-delete demo pages and rip out dependencies. This one ships with a cleanup script that removes the optional features you don't need (folders, files, dependencies, docs, and env entries), leaving a minimal base to build on. Run `--list` to see what's removable:
