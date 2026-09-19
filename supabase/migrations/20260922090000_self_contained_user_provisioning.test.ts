@@ -82,11 +82,27 @@ describe('self-contained user provisioning migration — static contract', () =>
     expect(insertIndex).toBeGreaterThan(lookupIndex);
     // The insert itself is additionally guarded by the unique index from
     // the single-business-per-owner migration.
-    expect(functionBody).toMatch(/on conflict \(owner_id\) do nothing;/);
+    expect(functionBody).toMatch(/on conflict \(owner_id\) where owner_id is not null do nothing;/);
     // Re-selects afterward so a concurrent-invocation race can never
     // proceed with a business_id that isn't a real, current row.
     const reselectCount = (functionBody.match(/select id into v_business_id/g) ?? []).length;
     expect(reselectCount).toBe(2);
+  });
+
+  /**
+   * businesses_owner_id_key (supabase/migrations/20260921090000_single_business_per_owner.sql)
+   * is a PARTIAL unique index (`where owner_id is not null`). Postgres's
+   * ON CONFLICT arbiter inference ignores a partial index unless the
+   * conflict target's own predicate matches it exactly — a bare
+   * `on conflict (owner_id)` would fail at runtime with "there is no
+   * unique or exclusion constraint matching the ON CONFLICT
+   * specification" rather than silently misbehaving, but that failure
+   * would still break every signup.
+   */
+  it('the businesses INSERT explicitly matches the partial unique index predicate on its ON CONFLICT target', () => {
+    expect(functionBody).toMatch(/on conflict \(owner_id\) where owner_id is not null do nothing;/);
+    // Never the bare, non-matching form that Postgres would reject.
+    expect(functionBody).not.toMatch(/on conflict \(owner_id\) do nothing;/);
   });
 
   it('widget_settings creation is idempotent — guarded by an explicit existence check, never an update', () => {
@@ -96,10 +112,54 @@ describe('self-contained user provisioning migration — static contract', () =>
     expect(functionBody).not.toMatch(/update public\.widget_settings/i);
   });
 
-  it('inserts zero knowledge_items rows, and documents why', () => {
+  /**
+   * No unique constraint on widget_settings.business_id is provable
+   * from this repository (that table is defined outside it) — a bare
+   * "if not exists (select ...) then insert" would be a genuine
+   * check-then-insert race under concurrency. This proves the fix:
+   * transaction-level serialization via pg_advisory_xact_lock, keyed on
+   * v_business_id, acquired immediately before the existence check.
+   */
+  it('widget_settings provisioning is concurrency-safe: an advisory transaction lock precedes the existence check', () => {
+    expect(functionBody).toMatch(
+      /perform pg_advisory_xact_lock\(hashtext\('widget_settings:' \|\| v_business_id::text\)::bigint\);/
+    );
+
+    const lockIndex = functionBody.indexOf('perform pg_advisory_xact_lock(');
+    const existenceCheckIndex = functionBody.indexOf(
+      'if not exists (\n    select 1 from public.widget_settings'
+    );
+    expect(lockIndex).toBeGreaterThan(0);
+    expect(existenceCheckIndex).toBeGreaterThan(lockIndex);
+  });
+
+  it('the widget_settings lock is scoped per business (not a single global lock that would serialize unrelated signups)', () => {
+    expect(functionBody).toMatch(/v_business_id::text/);
+  });
+
+  it('no check-then-insert race remains anywhere: every existence-check-guarded insert is either backed by a real unique constraint or preceded by a transaction lock', () => {
+    // businesses: backed by the real, database-enforced
+    // businesses_owner_id_key constraint (see the dedicated test above).
+    expect(functionBody).toMatch(/on conflict \(owner_id\) where owner_id is not null do nothing;/);
+    // widget_settings: no provable constraint, so backed by the
+    // advisory lock instead — and the lock must come before the
+    // existence check, not after (locking after checking would defeat
+    // the purpose).
+    const lockIndex = functionBody.indexOf('perform pg_advisory_xact_lock(');
+    const checkIndex = functionBody.indexOf(
+      'if not exists (\n    select 1 from public.widget_settings'
+    );
+    expect(lockIndex).toBeLessThan(checkIndex);
+  });
+
+  it('keeps zero starter knowledge items — account provisioning only, never seeded demo content', () => {
     expect(executableSql).not.toMatch(/insert into public\.knowledge_items/i);
     expect(sql).toMatch(/knowledge_items/);
     expect(sql).toMatch(/resolveOnboardingResumeStep/);
+    // Explicitly documented as account provisioning, not demo content —
+    // not just an absence of knowledge_items inserts.
+    expect(sql).toMatch(/account provisioning/i);
+    expect(sql).toMatch(/not seeded demo/i);
   });
 
   it('never issues an UPDATE or DELETE against profiles, businesses, or widget_settings — existing rows and values are never overwritten or removed', () => {

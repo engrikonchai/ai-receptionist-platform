@@ -1,7 +1,9 @@
--- Self-contained new-owner provisioning: this repository becomes the
--- authoritative source for what happens when a new auth.users row is
--- created, replacing the equivalent trigger/function that has lived
--- outside this repo in the older ChatbotDemo project.
+-- Self-contained new-owner ACCOUNT provisioning — profiles, businesses,
+-- widget_settings only, never a seeded demo/content dataset — this
+-- repository becomes the authoritative source for what happens when a
+-- new auth.users row is created, replacing the equivalent trigger/
+-- function that has lived outside this repo in the older ChatbotDemo
+-- project.
 --
 -- LEGACY OBJECT THIS REPLACES (documented, not independently verified —
 -- see the "What this migration cannot verify" note below): every prior
@@ -52,15 +54,26 @@
 --
 -- Single-business compatibility: this function looks up an existing
 -- business by owner_id before ever inserting one, and the INSERT itself
--- targets `on conflict (owner_id) do nothing` against
--- businesses_owner_id_key (supabase/migrations/20260921090000_single_business_per_owner.sql)
--- — it can never create a second business for the same owner, with or
+-- targets `on conflict (owner_id) where owner_id is not null do
+-- nothing` against businesses_owner_id_key
+-- (supabase/migrations/20260921090000_single_business_per_owner.sql) —
+-- it can never create a second business for the same owner, with or
 -- without a race between two invocations (see the re-select after
--- insert below).
+-- insert below). The `where owner_id is not null` on the conflict
+-- target is required, not optional: businesses_owner_id_key is a
+-- PARTIAL unique index (see that migration's own `create unique index
+-- ... where owner_id is not null`), and Postgres's ON CONFLICT arbiter
+-- inference ignores a partial index unless the conflict target's own
+-- predicate matches it exactly — a bare `on conflict (owner_id)` here
+-- would fail at runtime with "there is no unique or exclusion
+-- constraint matching the ON CONFLICT specification" rather than
+-- silently doing the wrong thing, but that failure would still break
+-- every signup, so this migration gets the predicate right up front.
 --
--- Starter knowledge items — a deliberate deviation from a literal
--- "seed starter knowledge_items" reading, documented here as the
--- conflict this migration's own audit found: this repo's existing
+-- Scope: account provisioning only, deliberately zero knowledge items
+-- — this migration is named and described as self-contained ACCOUNT
+-- provisioning, not seeded demo/starter content, precisely because it
+-- inserts none. This repo's existing
 -- resolveOnboardingResumeStep() (src/features/onboarding/utils/setup-progress.ts)
 -- and its test suite explicitly rely on a brand-new business having
 -- ZERO knowledge_items — that is precisely the signal used to resume a
@@ -180,7 +193,7 @@ begin
       v_business_id, new.id, 'Adria Stay Budva', v_slug, gen_random_uuid(),
       'hotel', 'Budva, Montenegro', 'en', array['en'], null, true
     )
-    on conflict (owner_id) do nothing;
+    on conflict (owner_id) where owner_id is not null do nothing;
 
     -- Race guard: if a concurrent invocation for this same owner_id
     -- already won between the select above and this insert, the insert
@@ -204,11 +217,28 @@ begin
   end if;
 
   -- 3. widget_settings: at most one row per business. No unique
-  --    constraint on widget_settings.business_id is assumed here (this
-  --    table, like businesses, is defined outside this repo) — guarded
-  --    instead by an explicit existence check, so this is safe whether
-  --    or not such a constraint exists in the live schema, and never
-  --    touches an existing row's settings.
+  --    constraint on widget_settings.business_id is provable from this
+  --    repository (that table, like businesses, is defined outside it)
+  --    — a bare "if not exists (select ...) then insert" would be a
+  --    genuine check-then-insert race under concurrency: two
+  --    invocations for the same business_id could both pass the
+  --    existence check before either commits its insert, producing two
+  --    widget_settings rows for one business. Instead of assuming a
+  --    constraint this migration cannot confirm exists, this serializes
+  --    at the transaction level: pg_advisory_xact_lock blocks a second
+  --    concurrent invocation for the same v_business_id until the first
+  --    one's transaction commits or rolls back (the lock is released
+  --    automatically either way — no explicit unlock needed), so by the
+  --    time a second invocation reaches the existence check below, the
+  --    first invocation's insert (or its absence, if it rolled back) is
+  --    already visible. hashtext() reduces v_business_id to a lock key;
+  --    an extremely rare hash collision between two different business
+  --    ids would only ever cause unrelated invocations to serialize
+  --    against each other unnecessarily, never an incorrect skip or a
+  --    duplicate row. Never touches an existing row's settings — this
+  --    is an existence check plus INSERT, never an UPDATE.
+  perform pg_advisory_xact_lock(hashtext('widget_settings:' || v_business_id::text)::bigint);
+
   if not exists (
     select 1 from public.widget_settings where business_id = v_business_id
   ) then
@@ -224,17 +254,17 @@ begin
     );
   end if;
 
-  -- 4. Starter knowledge items: deliberately none — see this
-  --    migration's own header comment for why seeding any
-  --    knowledge_items row here would conflict with this repo's
-  --    existing onboarding resume-step logic.
+  -- 4. Account provisioning ends here — deliberately zero
+  --    knowledge_items. See this migration's own header comment for
+  --    why seeding any knowledge_items row here would conflict with
+  --    this repo's existing onboarding resume-step logic.
 
   return new;
 end;
 $$;
 
 comment on function public.handle_new_user() is
-  'New-owner provisioning for ai-receptionist-platform, self-contained in this repository (replaces the equivalent trigger previously maintained in the ChatbotDemo project — see supabase/migrations/20260922090000_self_contained_user_provisioning.sql). Fires once per auth.users insert via the on_auth_user_created trigger. Creates exactly one profiles row, at most one businesses row (owner_id is unique — see businesses_owner_id_key), and at most one widget_settings row for that business. Idempotent: safe to invoke more than once for the same auth user without duplicating or overwriting any row. Inserts zero knowledge_items — see this function''s own migration file for why. Never logs an email address, user id, business id, or raw signup metadata.';
+  'Self-contained new-owner ACCOUNT provisioning for ai-receptionist-platform (replaces the equivalent trigger previously maintained in the ChatbotDemo project — see supabase/migrations/20260922090000_self_contained_user_provisioning.sql). Fires once per auth.users insert via the on_auth_user_created trigger. Creates exactly one profiles row, at most one businesses row (owner_id is unique via the partial index businesses_owner_id_key — the ON CONFLICT target matches its predicate exactly), and at most one widget_settings row for that business (serialized per business_id with pg_advisory_xact_lock, since no unique constraint on widget_settings.business_id is provable from this repository). Idempotent and concurrency-safe: safe to invoke more than once, including concurrently, for the same auth user without duplicating or overwriting any row. Inserts zero knowledge_items — this is account provisioning, not seeded demo/starter content; see this function''s own migration file for why. Never logs an email address, user id, business id, or raw signup metadata.';
 
 revoke all on function public.handle_new_user() from public;
 
