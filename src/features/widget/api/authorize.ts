@@ -44,6 +44,12 @@ export async function verifyActiveBusiness(
     return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };
   }
 
+  // V1 fail-closed case (see OwnerContext's own doc comment) — never
+  // trusts a requested business id against an ambiguous owner state.
+  if (ctx.status === 'multiple_businesses') {
+    return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };
+  }
+
   const business = ctx.businesses.find((b) => b.id === businessId);
   if (!business) {
     return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };

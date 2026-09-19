@@ -54,17 +54,22 @@ export default async function OnboardingPage() {
     return <AccountRecovery email={ctx.user.email ?? undefined} />;
   }
 
+  // V1 fail-closed case: more than one owned business is unexpected
+  // (see OwnerContext's own doc comment) — never silently run this
+  // wizard against an arbitrarily-picked one of them.
+  if (ctx.status === 'multiple_businesses') {
+    return <AccountRecovery email={ctx.user.email ?? undefined} variant='multiple_businesses' />;
+  }
+
   if (ctx.profile.onboarding_completed) {
     redirect('/dashboard/overview');
   }
 
-  // This one-time wizard is deliberately scoped to a single business —
-  // "Load a business owned by that user" — the same rule every step's
-  // own save action re-verifies against: the oldest business RLS
-  // returns for this owner. An owner with more than one business
-  // completes setup for any additional ones through the dashboard's own
-  // setup checklist (src/app/dashboard/overview), never by repeating
-  // this wizard — see resolveOnboardingResumeStep's own doc comment.
+  // This one-time wizard is scoped to the owner's one business — the V1
+  // product rule (see supabase/migrations/20260921090000_single_business_per_owner.sql)
+  // guarantees `ctx.businesses` holds at most one row here (more than
+  // one is the `multiple_businesses` fail-closed case handled above).
+  // The same rule every step's own save action re-verifies against.
   const business = ctx.businesses[0];
   const [{ data: widgetSettingsRow }, { count: activeKnowledgeItemCount }] = await Promise.all([
     ctx.supabase.from('widget_settings').select('*').eq('business_id', business.id).maybeSingle(),

@@ -233,3 +233,65 @@ describe('resolveOnboardingResumeStep', () => {
     expect(step).toBe(ONBOARDING_STEP.knowledge);
   });
 });
+
+/**
+ * The exact row shape
+ * supabase/migrations/20260922090000_self_contained_user_provisioning.sql's
+ * handle_new_user() trigger seeds for a brand-new signup: placeholder
+ * business identity (non-empty name/type/language, matching
+ * ChatbotDemo's own legacy placeholder-data behavior), a widget_settings
+ * row with widget_enabled=true but everything else blank, and zero
+ * knowledge_items. Proves setup-progress reads that exact seeded shape
+ * the way onboarding/page.tsx and dashboard/overview already expect.
+ */
+describe('setup progress with self-contained-provisioning starter data', () => {
+  const seededBusiness: SetupProgressBusinessInput = {
+    name: 'Adria Stay Budva',
+    business_type: 'hotel',
+    default_language: 'en',
+    supported_languages: ['en']
+  };
+
+  const seededWidget: SetupProgressWidgetInput = {
+    widget_enabled: true,
+    title: '',
+    welcome_message_en: null,
+    welcome_message_me: null,
+    welcome_message_ru: null,
+    allowed_origins: [],
+    installation_confirmed: false
+  };
+
+  it('computeSetupProgress reports only the business-profile item complete (from placeholder seed data), nothing else', () => {
+    const progress = computeSetupProgress({
+      business: seededBusiness,
+      widget: seededWidget,
+      activeKnowledgeItemCount: 0
+    });
+
+    expect(progress.completedCount).toBe(1);
+    expect(progress.totalCount).toBe(5);
+    expect(progress.isComplete).toBe(false);
+
+    const completedById = Object.fromEntries(
+      progress.items.map((item) => [item.id, item.completed])
+    );
+    expect(completedById).toEqual({
+      businessProfile: true,
+      knowledgeBase: false,
+      widgetConfigured: false,
+      websiteOrigin: false,
+      installationConfirmed: false
+    });
+  });
+
+  it('resolveOnboardingResumeStep still lands a freshly provisioned owner on the business step, despite the pre-filled placeholder fields', () => {
+    const step = resolveOnboardingResumeStep({
+      activeKnowledgeItemCount: 0,
+      widget: seededWidget,
+      onboardingCompleted: false
+    });
+
+    expect(step).toBe(ONBOARDING_STEP.business);
+  });
+});

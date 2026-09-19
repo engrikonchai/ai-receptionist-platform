@@ -49,14 +49,17 @@ export default function AppSidebar({
   const { isMobile, setOpenMobile } = useSidebar();
   const filteredGroups = useFilteredNavGroups(navGroups);
 
-  // Owned here (not inside BusinessSwitcher) so the same id can also
-  // scope useNavBadgeCounts()'s queries below — both need to agree on
-  // which business is active.
-  const [activeBusinessId, setActiveBusinessId] = React.useState<string | null>(
+  // V1: one owner, one business — there is no switcher to change this
+  // after mount, so a plain derived value is enough (no state needed).
+  // `initialActiveBusinessId` (from dashboard/layout.tsx's
+  // resolveActiveBusinessId()) already only ever resolves to one of
+  // this owner's own `businesses`, but re-verified here too so
+  // useNavBadgeCounts() below can never scope its queries to a stale
+  // id that doesn't match the businesses this render actually has.
+  const activeBusinessId =
     initialActiveBusinessId && businesses.some((b) => b.id === initialActiveBusinessId)
       ? initialActiveBusinessId
-      : (businesses[0]?.id ?? null)
-  );
+      : (businesses[0]?.id ?? null);
 
   const { pendingHandoffCount, newLeadCount } = useNavBadgeCounts(activeBusinessId);
   const badgeCountByKind = { pendingHandoffCount, newLeadCount };
@@ -77,11 +80,7 @@ export default function AppSidebar({
   return (
     <Sidebar collapsible='icon'>
       <SidebarHeader>
-        <BusinessSwitcher
-          businesses={businesses}
-          activeBusinessId={activeBusinessId}
-          onActiveBusinessIdChange={setActiveBusinessId}
-        />
+        <BusinessSwitcher businesses={businesses} />
       </SidebarHeader>
       <SidebarContent className='overflow-x-hidden'>
         {filteredGroups.map((group) => (

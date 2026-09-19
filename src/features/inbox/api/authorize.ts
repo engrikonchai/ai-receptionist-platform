@@ -38,22 +38,14 @@ export async function verifyActiveBusiness(
     return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };
   }
 
+  // V1 fail-closed case (see OwnerContext's own doc comment) — never
+  // trusts a requested business id against an ambiguous owner state.
+  if (ctx.status === 'multiple_businesses') {
+    return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };
+  }
+
   const business = ctx.businesses.find((b) => b.id === businessId);
   if (!business) {
-    // Temporary, safe diagnostic for the "Inbox shows 0 conversations"
-    // investigation — business ids are not secrets (already visible in
-    // the URL/cookie and scoped by RLS), so logging the requested id
-    // against the owner's actual RLS-scoped business ids is safe and
-    // confirms whether a mismatched id is what's excluding a business's
-    // conversations. Remove once the production cause is confirmed.
-    console.error(
-      '[inbox:diagnostic]',
-      JSON.stringify({
-        event: 'business_id_mismatch',
-        requestedBusinessId: businessId,
-        ownedBusinessIds: ctx.businesses.map((b) => b.id)
-      })
-    );
     return { ok: false, error: NO_BUSINESS_ACCESS_MESSAGE };
   }
 

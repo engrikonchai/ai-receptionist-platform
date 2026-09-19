@@ -58,6 +58,13 @@ export default async function DashboardLayout({ children }: { children: React.Re
     return <AccountRecovery email={ctx.user.email ?? undefined} />;
   }
 
+  // V1 fail-closed case: more than one owned business is unexpected
+  // (see OwnerContext's own doc comment) — never silently render the
+  // dashboard scoped to an arbitrarily-picked one of them.
+  if (ctx.status === 'multiple_businesses') {
+    return <AccountRecovery email={ctx.user.email ?? undefined} variant='multiple_businesses' />;
+  }
+
   if (!ctx.profile.onboarding_completed) {
     redirect('/onboarding');
   }
