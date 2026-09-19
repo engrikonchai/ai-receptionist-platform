@@ -10,12 +10,55 @@
 -- not run this repository's migration history from beginning to end.
 -- This migration is what makes it able to.
 --
--- Ordering: timestamped 20260910090000 — before every other file in this
--- directory (the earliest existing migration is
--- 20260915000100_platform_onboarding.sql) — so it runs first against a
--- blank database, and every later migration's own `alter table ... add
--- column if not exists` / `create policy` / `create index if not exists`
--- statements find the table they expect already in place.
+-- REVISION 2 — corrected against a read-only comparison of this
+-- migration's first revision against the actual LIVE production
+-- Supabase schema. Every fact below marked VERIFIED comes directly from
+-- that live comparison, not from inference. Three real mistakes in the
+-- first revision are fixed here:
+--   1. businesses.owner_id referenced auth.users(id) directly. The live
+--      schema instead has businesses.owner_id -> public.profiles(id) ON
+--      DELETE CASCADE, and it is profiles.id that references
+--      auth.users(id) ON DELETE CASCADE. Fixed below.
+--   2. leads.reference was believed to be unconstrained. The live schema
+--      has leads_reference_key UNIQUE (reference). Fixed below, with the
+--      same duplicate-preflight pattern as this migration's other
+--      unique indexes.
+--   3. The updated_at trigger mechanism was invented with per-table
+--      names (set_updated_at_<table>) as an inferred, not-yet-verified
+--      mechanism. The live database has exactly this mechanism, but
+--      under one shared trigger name (`set_updated_at`, reused per
+--      table — trigger names only need to be unique per table, not
+--      database-wide) and a SECURITY INVOKER function whose exact body
+--      is reproduced verbatim below. Fixed below.
+--
+-- MIGRATION-ORDER WARNING — read before ever running Supabase CLI
+-- migration commands against production after this file exists in this
+-- directory's history:
+--   - This file is timestamped 20260910090000, earlier than every
+--     migration already applied to production (the earliest applied
+--     migration is 20260915000100_platform_onboarding.sql). That is
+--     intentional: it is what lets a brand-new, EMPTY Supabase project
+--     run this repository's entire migration history from scratch.
+--   - It is primarily a fresh-database baseline. It is NOT meant to be
+--     casually executed against the current production database.
+--   - Production already contains all eight of these foundational
+--     tables, in the exact shape this migration reproduces (that is the
+--     whole point — see REVISION 2 above). Every statement in this file
+--     is written to be a safe no-op against that existing shape (see
+--     EXISTING-DATABASE SAFETY below), but "safe to run" is not the same
+--     as "needs to be run."
+--   - Merging this branch, or this file existing in the repository's
+--     migration history, does not by itself mean anyone should manually
+--     execute it against production.
+--   - Because its timestamp sorts before migrations Supabase's own CLI
+--     already recorded as applied, a future `supabase db push` (or
+--     equivalent reconciliation) against production may need this
+--     migration's version explicitly marked as already applied —
+--     e.g. `supabase migration repair --status applied 20260910090000`
+--     — rather than actually executed, so the CLI's own migration-
+--     history table stays in sync with what production really has. That
+--     reconciliation step belongs to whoever manages the Supabase
+--     CLI/production migration state, not to this file.
 --
 -- SCOPE — deliberately narrow. This migration creates each of the eight
 -- tables in the shape they had BEFORE this repository's own additive
@@ -24,10 +67,12 @@
 --     (added by 20260915000100_platform_onboarding.sql)
 --   - businesses: WITHOUT the businesses_owner_id_key unique index
 --     (added by 20260921090000_single_business_per_owner.sql)
---   - messages: WITHOUT sender_type / client_message_id
---     (added by 20260915170200_inbox_human_replies.sql)
---   - widget_settings: WITHOUT widget_enabled / allowed_origins (added by
---     20260916120000_widget_allowed_origins.sql) and WITHOUT
+--   - messages: WITHOUT sender_type / client_message_id, and WITHOUT the
+--     messages_sender_type_check constraint on that column (all three
+--     added by 20260915170200_inbox_human_replies.sql — VERIFIED live to
+--     exist, but owned entirely by that migration, not duplicated here)
+--   - widget_settings: WITHOUT widget_enabled / allowed_origins (added
+--     by 20260916120000_widget_allowed_origins.sql) and WITHOUT
 --     installation_confirmed / installation_confirmed_at (added by
 --     20260917140000_widget_installation_confirmed.sql)
 --   - handoffs: WITHOUT client_request_id
@@ -42,76 +87,60 @@
 -- migration intentionally does NOT create any of those later objects
 -- itself — see "Not duplicate objects created by later migrations" below.
 --
--- EVIDENCE — every column, type, and constraint below is derived from
--- one or more of:
---   (a) this repository's own later migrations, which document a
---       column's existence, type, or a lookup key's uniqueness in their
---       own header comments or `alter table` statements (cited inline
---       below, migration by migration);
---   (b) src/lib/supabase/database.types.ts, this repository's own
---       hand-written row types for the shared schema, which its own
---       header comment describes as ported from ChatbotDemo's real
---       migrations and required to stay in sync with them;
---   (c) a repository-wide audit of every `.from('<table>')` call in
---       src/**, cross-checking every `.select()`/`.insert()`/`.update()`/
---       `.eq()`/`.order()` against (a) and (b) — confirming no column is
---       used that isn't already known, confirming which lookups assume
---       uniqueness (via `.maybeSingle()`/`.single()` after filtering on
---       exactly one column), which columns are always supplied on
---       insert vs. always omitted (implying a required database
---       default), and every literal value ever written to an enum-like
---       text column (cross-checked against the type unions in (b)).
--- See this migration's own PR/report for the full evidence trail.
+-- EVIDENCE, split into three explicit categories rather than one blended
+-- list, per this migration's own revision-2 correction request:
 --
--- UNCERTAIN / NOT PROVABLE FROM THIS REPOSITORY — called out here, not
--- guessed silently:
---   - businesses.slug: never queried anywhere in src/** (write-only,
---     always generated by handle_new_user() as
---     'business-' || <fresh uuid, dashes stripped>, which is unique by
---     construction). No application code assumes slug is a unique
---     lookup key. This migration still adds a unique index — a bare
---     "slug" column is conventionally expected to be unique, and the
---     one value this repository ever writes into it is already globally
---     unique by construction, so the index can never reject a real
---     write this app makes — but this is this migration's own inference
---     from naming convention, not a fact independently confirmed
---     against ChatbotDemo's real schema.
---   - leads.reference: explicitly documented in this repo's own
---     src/lib/public-widget/runtime.ts (generateLeadReference() doc
---     comment) as "a short, human-scannable reference, not a security
---     token ... has no known uniqueness requirement this needs to
---     defend against beyond 'very unlikely to collide'" — no application
---     code ever looks it up by value. This migration therefore does NOT
---     add a unique constraint on it, matching that documented intent
---     exactly rather than guessing one into existence.
---   - Foreign-key ON DELETE behavior (owner_id/business_id/
---     conversation_id) is not provable from any migration or query in
---     this repository (nothing in this app ever deletes a business,
---     conversation, or auth user today). This migration uses
---     `on delete cascade` for owner_id -> auth.users and business_id ->
---     businesses — the same choice this repo's own
---     20260920100000_paddle_billing_foundation.sql already made for
---     business_subscriptions.business_id and billing_checkout_
---     attempts.business_id, so this migration is at least internally
---     consistent with this repo's own established precedent — and
---     `on delete set null` for the nullable conversation_id references
---     on leads/handoffs (never cascade a delete through a nullable
---     reference onto rows that stand on their own). None of this is
---     exercised by any feature that exists today.
---   - A working `updated_at` column requires *something* to advance it
---     on every UPDATE — no migration or application code ever sets
---     `updated_at` explicitly (confirmed by the same repo-wide audit;
---     see e.g. src/features/inbox/api/service.ts's own
---     `.order('updated_at', { ascending: false })` for the Inbox list,
---     which only makes sense if the column tracks real recency), so
---     this migration adds one `set_updated_at()` trigger function plus
---     one `BEFORE UPDATE` trigger per table that has the column, all
---     under names owned exclusively by this migration
---     (`set_updated_at_<table>`) so they can never collide with or
---     replace a same-purpose trigger already installed under some other
---     name in production — worst case, both fire and reach the same
---     result. This mechanism itself is inferred, not confirmed against
---     ChatbotDemo's real implementation.
+--   VERIFIED LIVE FACTS (confirmed by a read-only comparison against the
+--   actual production Supabase schema, not inferred):
+--     - businesses.owner_id -> public.profiles(id) on delete cascade
+--     - profiles.id -> auth.users(id) on delete cascade
+--     - businesses.slug is unique; businesses.public_widget_id is unique
+--     - widget_settings.business_id is unique; leads.reference is unique
+--       (leads_reference_key)
+--     - every FK delete rule listed in the per-table sections below
+--     - every CHECK constraint listed in the per-table sections below
+--       (channel/status/role/sender_type/source/position vocabularies,
+--       businesses.supported_languages non-empty, messages.content
+--       length 1-4000, leads.check_out >= leads.check_in,
+--       leads.guest_count 1-4)
+--     - public.set_updated_at()'s exact signature and body (language
+--       plpgsql, SECURITY INVOKER, no search_path override), reproduced
+--       verbatim below, owned by postgres, executable by PUBLIC (which
+--       already covers anon/authenticated/postgres/service_role — see
+--       GRANTS below)
+--     - a BEFORE UPDATE trigger named `set_updated_at` (one shared name,
+--       reused per table) on profiles, businesses, knowledge_items,
+--       conversations, leads, handoffs, and widget_settings; messages
+--       has none
+--     - RLS is enabled on all eight tables with owner-scoped policies
+--       already installed
+--
+--   STILL INFERRED (this migration's own reasonable choice, not
+--   independently confirmed against the live schema, and called out as
+--   such rather than silently presented as verified):
+--     - Every plain performance index this migration adds beyond the
+--       four verified unique ones (e.g.
+--       knowledge_items_business_id_sort_order_created_at_idx,
+--       conversations_business_id_updated_at_idx,
+--       leads_business_id_created_at_idx and
+--       leads_conversation_id_created_at_idx,
+--       handoffs_business_id_created_at_idx and
+--       handoffs_conversation_id_created_at_idx,
+--       messages_conversation_id_created_at_idx) — inferred from this
+--       repository's own `.order()`/`.eq()` query patterns (see each
+--       table's own comment below), not confirmed to exist under these
+--       exact names in production. Harmless either way: an index is a
+--       pure performance aid, never a correctness or security concern,
+--       and `create index if not exists` no-ops if an equivalent
+--       already exists under a different name.
+--
+--   CANNOT BE RUNTIME-TESTED FROM THIS ENVIRONMENT: this migration's own
+--   static SQL contract (its matching .test.ts) is the only verification
+--   performed here — there is no local Supabase CLI or reachable Docker
+--   daemon in this environment, so none of "run this against a blank
+--   database," "confirm the signup trigger provisions correctly," or
+--   "confirm RLS isolates two owners from each other" has been executed.
+--   See this branch's own PR/report for the exact blocker.
 --
 -- EXISTING-DATABASE SAFETY — `create table if not exists` alone silently
 -- accepts an incompatible pre-existing table (the exact failure mode
@@ -133,9 +162,10 @@
 --
 -- Never touches auth.users itself (no ALTER, no ownership/permission
 -- change) beyond the ordinary, Supabase-permitted `references
--- auth.users(id)` foreign keys on profiles.id and businesses.owner_id —
--- the same kind of reference every Supabase starter schema uses, and no
--- different in kind from every other `references public.businesses(id)`
+-- auth.users(id)` foreign key on profiles.id alone (VERIFIED: businesses
+-- no longer references auth.users at all — see REVISION 2 above) — the
+-- same kind of reference every Supabase starter schema uses, and no
+-- different in kind from every other `references public.<table>(id)`
 -- foreign key elsewhere in this same migration.
 --
 -- Not duplicate objects created by later migrations: this migration
@@ -148,16 +178,37 @@
 -- that migration and in 20260915184700_knowledge_items_owner_policies.sql
 -- — this migration deliberately does not re-declare any of them, so
 -- there is exactly one place in this repository that owns each policy's
--- SQL. Table-level SELECT/INSERT/UPDATE/DELETE privileges for `anon`/
--- `authenticated` are governed by this Supabase project's own default
--- privileges (the same reason no other migration in this repo grants
--- table-level access to profiles/businesses/etc. either) — RLS is what
--- actually restricts row access once those default privileges apply.
+-- SQL, and RLS is never weakened, disabled, or bypassed anywhere below.
 -- This migration also never creates businesses_owner_id_key,
--- messages_client_message_id_key, widget_settings.widget_enabled/
--- allowed_origins/installation_confirmed(_at), or handoffs.
--- client_request_id — all already owned by their own later migrations,
--- listed in SCOPE above.
+-- messages_client_message_id_key, the messages_sender_type_check
+-- constraint, widget_settings.widget_enabled/allowed_origins/
+-- installation_confirmed(_at), or handoffs.client_request_id — all
+-- already owned by their own later migrations, listed in SCOPE above.
+--
+-- GRANTS — audited against every later migration before adding any of
+-- this migration's own. VERIFIED: the live tables already have standard
+-- Supabase table privileges for anon/authenticated/postgres/
+-- service_role. This migration does not issue a single explicit GRANT
+-- or REVOKE for any of the eight tables (or for set_updated_at()) —
+-- table-level SELECT/INSERT/UPDATE/DELETE privileges for `anon`/
+-- `authenticated`/`service_role` on newly created public-schema objects
+-- are configured once, at the Supabase project level (via ALTER DEFAULT
+-- PRIVILEGES set up when the project itself is provisioned — the same
+-- mechanism every genuinely blank Supabase project gets from
+-- `supabase init`/the platform's own project bootstrap), not per
+-- migration. Every other migration in this repository that creates a
+-- plain owner-scoped table follows the same rule (20260915193000_repair_
+-- live_rls_policies.sql and 20260915184700_knowledge_items_owner_
+-- policies.sql grant nothing either) — reproducing that default
+-- privilege grant explicitly here would duplicate what the platform
+-- itself already sets up for a self-contained blank project, with no
+-- narrowing benefit, and RLS (enabled on every table below) is what
+-- actually restricts row access once that default table-level privilege
+-- applies. This migration never grants any access to the billing/
+-- internal service-role-only tables owned by
+-- 20260920100000_paddle_billing_foundation.sql or
+-- 20260916130000_widget_rate_limits.sql — it does not touch those tables
+-- at all.
 --
 -- Never deletes, truncates, or rewrites any existing row; never renames
 -- or silently changes an existing column's type; never weakens,
@@ -166,13 +217,23 @@
 -- anywhere, including in comments and identifiers.
 
 -- =====================================================================
--- 0. Shared helper: set_updated_at(). One trigger function, reused by a
---    per-table BEFORE UPDATE trigger below. See the "UNCERTAIN" note
---    above for why this migration adds it at all.
+-- 0. Shared helper: set_updated_at(). VERIFIED to match the live
+--    function's exact signature and body: plpgsql, SECURITY INVOKER
+--    (the explicit keyword below matches the live definition verbatim;
+--    it is also plpgsql's own default when omitted, so this changes no
+--    behavior either way), no `set search_path` override, and no
+--    grant/revoke statement — the live function is executable by
+--    PUBLIC (which already covers anon/authenticated/postgres/
+--    service_role; see GRANTS above), and PUBLIC execute is exactly
+--    what a newly created function gets by default when nothing revokes
+--    it, so nothing further is needed to reproduce that. This migration
+--    never adds SECURITY DEFINER, never narrows search_path, and never
+--    revokes the execute access every role already has.
 -- =====================================================================
 create or replace function public.set_updated_at()
 returns trigger
 language plpgsql
+security invoker
 as $$
 begin
   new.updated_at = now();
@@ -181,19 +242,18 @@ end;
 $$;
 
 comment on function public.set_updated_at() is
-  'Shared BEFORE UPDATE trigger function: stamps updated_at = now() on every row update. Installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql for every foundational table with an updated_at column — see that migration''s own header comment for why.';
+  'Shared BEFORE UPDATE trigger function: stamps updated_at = now() on every row update. Installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql for every foundational table with an updated_at column, reusing the one verified live trigger name `set_updated_at` per table.';
 
 -- =====================================================================
 -- 1. profiles — one row per auth.users row, keyed by the same id.
 --    Columns/shape confirmed by: src/lib/supabase/database.types.ts
 --    (ProfileRow, minus onboarding_completed/onboarding_completed_at,
 --    which 20260915000100_platform_onboarding.sql's own header comment
---    documents as new additive columns it introduces); profiles.id as
---    the FK to auth.users is confirmed by
---    20260915193000_repair_live_rls_policies.sql's own policies
---    (`id = auth.uid()`) and by every `.eq('id', <user id>)` call in
---    src/features/auth/components/signup-form.tsx and
---    src/features/onboarding/api/service.ts.
+--    documents as new additive columns it introduces).
+--    VERIFIED live: profiles.id -> auth.users(id) on delete cascade —
+--    this is the one FK in this whole migration that actually reaches
+--    auth.users; businesses.owner_id below reaches profiles instead
+--    (see REVISION 2 above and that table's own section).
 -- =====================================================================
 create table if not exists public.profiles (
   id uuid primary key references auth.users (id) on delete cascade,
@@ -229,35 +289,36 @@ end $$;
 
 alter table public.profiles enable row level security;
 
-drop trigger if exists set_updated_at_profiles on public.profiles;
-create trigger set_updated_at_profiles
+drop trigger if exists set_updated_at on public.profiles;
+create trigger set_updated_at
   before update on public.profiles
   for each row
   execute function public.set_updated_at();
 
 comment on table public.profiles is
-  'One row per signed-up account. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see supabase/migrations/20260915000100_platform_onboarding.sql for this table''s additive post-signup onboarding-tracking columns and 20260922090000_self_contained_user_provisioning.sql for the trigger that populates this table on signup.';
+  'One row per signed-up account, keyed by that same account''s id (references the platform''s own identity table, cascading on delete — see this migration''s own header comment for the verified detail). Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see supabase/migrations/20260915000100_platform_onboarding.sql for this table''s additive post-signup onboarding-tracking columns and 20260922090000_self_contained_user_provisioning.sql for the trigger that populates this table on signup.';
 
 -- =====================================================================
 -- 2. businesses — one row per business; owner_id links to the owning
---    auth.users row. Columns/shape confirmed by database.types.ts
---    (BusinessRow) and by the exact column list
+--    profiles row (NOT directly to auth.users — VERIFIED live and
+--    corrected here; see REVISION 2 above). Columns/shape confirmed by
+--    database.types.ts (BusinessRow) and by the exact column list
 --    20260922090000_self_contained_user_provisioning.sql's own
 --    handle_new_user() inserts:
 --      id, owner_id, name, slug, public_widget_id, business_type,
 --      location, default_language, supported_languages, handoff_email,
 --      is_active
---    public_widget_id's uniqueness is confirmed by
---    src/lib/public-widget/runtime.ts's resolveWidgetForRuntime(),
---    which looks it up via `.eq('public_widget_id', ...).maybeSingle()`
---    — a hard assumption that at most one business row can ever match.
+--    public_widget_id and slug are both VERIFIED live to be unique.
+--    supported_languages must be non-empty (VERIFIED live CHECK) —
+--    consistent with the default `array['en']` above and with every
+--    business row this app's own signup trigger has ever created.
 --    owner_id's own uniqueness (businesses_owner_id_key) is
 --    deliberately NOT created here — see SCOPE above; that index
 --    belongs to 20260921090000_single_business_per_owner.sql alone.
 -- =====================================================================
 create table if not exists public.businesses (
   id uuid primary key default gen_random_uuid(),
-  owner_id uuid references auth.users (id) on delete cascade,
+  owner_id uuid references public.profiles (id) on delete cascade,
   name text not null,
   slug text not null,
   public_widget_id uuid not null default gen_random_uuid(),
@@ -268,7 +329,9 @@ create table if not exists public.businesses (
   handoff_email text,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  constraint businesses_supported_languages_not_empty_check
+    check (cardinality(supported_languages) > 0)
 );
 
 do $$
@@ -344,14 +407,14 @@ create unique index if not exists businesses_slug_key
 
 alter table public.businesses enable row level security;
 
-drop trigger if exists set_updated_at_businesses on public.businesses;
-create trigger set_updated_at_businesses
+drop trigger if exists set_updated_at on public.businesses;
+create trigger set_updated_at
   before update on public.businesses
   for each row
   execute function public.set_updated_at();
 
 comment on table public.businesses is
-  'One row per business. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260921090000_single_business_per_owner.sql for the additive owner_id uniqueness constraint and 20260922090000_self_contained_user_provisioning.sql for the trigger that populates this table on signup.';
+  'One row per business. owner_id references public.profiles(id) on delete cascade — see this migration''s own header comment for why that indirection, rather than a direct identity-table reference, is the verified shape. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260921090000_single_business_per_owner.sql for the additive owner_id uniqueness constraint and 20260922090000_self_contained_user_provisioning.sql for the trigger that populates this table on signup.';
 
 -- =====================================================================
 -- 3. knowledge_items — FAQ-style entries scoped to a business. Columns
@@ -360,7 +423,10 @@ comment on table public.businesses is
 --    business_id, category, question, answer_en, answer_me, answer_ru,
 --    is_active, sort_order — every one of those explicitly, every time)
 --    and its list query's `.eq('business_id', ...).order('sort_order',
---    { ascending: true }).order('created_at', { ascending: true })`.
+--    { ascending: true }).order('created_at', { ascending: true })` —
+--    the index below is this migration's own inference from that query
+--    pattern, not independently verified against the live database (see
+--    "STILL INFERRED" in this migration's own header comment).
 -- =====================================================================
 create table if not exists public.knowledge_items (
   id uuid primary key default gen_random_uuid(),
@@ -409,8 +475,8 @@ create index if not exists knowledge_items_business_id_sort_order_created_at_idx
 
 alter table public.knowledge_items enable row level security;
 
-drop trigger if exists set_updated_at_knowledge_items on public.knowledge_items;
-create trigger set_updated_at_knowledge_items
+drop trigger if exists set_updated_at on public.knowledge_items;
+create trigger set_updated_at
   before update on public.knowledge_items
   for each row
   execute function public.set_updated_at();
@@ -423,14 +489,8 @@ comment on table public.knowledge_items is
 --    widget. Columns confirmed by database.types.ts (ConversationRow)
 --    and by src/lib/public-widget/runtime.ts's own INSERT (supplies
 --    business_id, visitor_id, channel, detected_language, status,
---    human_takeover, lead_created, flow_state) and
---    src/features/inbox/api/service.ts's
---    `.order('updated_at', { ascending: false })` Inbox-list query.
---    Enum values (channel/status) cross-checked against every literal
---    actually written anywhere in src/**: channel only ever writes
---    'website' (instagram/whatsapp exist in the type union but no
---    insert path uses them yet); status writes 'open'/'closed'/
---    'handed_off', matching ConversationStatus exactly.
+--    human_takeover, lead_created, flow_state). channel and status
+--    CHECK vocabularies are VERIFIED live.
 -- =====================================================================
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
@@ -482,8 +542,8 @@ create index if not exists conversations_business_id_updated_at_idx
 
 alter table public.conversations enable row level security;
 
-drop trigger if exists set_updated_at_conversations on public.conversations;
-create trigger set_updated_at_conversations
+drop trigger if exists set_updated_at on public.conversations;
+create trigger set_updated_at
   before update on public.conversations
   for each row
   execute function public.set_updated_at();
@@ -495,14 +555,13 @@ comment on table public.conversations is
 -- 5. messages — one row per message within a conversation. Columns
 --    confirmed by database.types.ts (MessageRow, minus sender_type/
 --    client_message_id, which 20260915170200_inbox_human_replies.sql's
---    own header comment documents as its own additive columns) and by
---    every `.insert()` into messages in src/lib/public-widget/
---    runtime.ts (always supplies conversation_id, role, content; never
---    id or created_at). No updated_at column — this table has none in
---    database.types.ts's MessageRow, and no code anywhere reads or
---    writes one. Role values cross-checked: 'user'/'assistant' are
---    written; 'system' exists only in the type union, never written by
---    any code path today.
+--    own header comment documents as its own additive columns — that
+--    migration also owns the VERIFIED live messages_sender_type_check
+--    constraint (sender_type null, 'ai', or 'human'), not duplicated
+--    here). role vocabulary and content length (1-4000 characters) are
+--    both VERIFIED live CHECK constraints owned by this baseline, since
+--    role and content are original columns. No updated_at column and no
+--    set_updated_at trigger — VERIFIED live.
 -- =====================================================================
 create table if not exists public.messages (
   id uuid primary key default gen_random_uuid(),
@@ -511,7 +570,8 @@ create table if not exists public.messages (
   content text not null,
   intent text,
   created_at timestamptz not null default now(),
-  constraint messages_role_check check (role in ('user', 'assistant', 'system'))
+  constraint messages_role_check check (role in ('user', 'assistant', 'system')),
+  constraint messages_content_length_check check (char_length(content) between 1 and 4000)
 );
 
 do $$
@@ -547,25 +607,20 @@ create index if not exists messages_conversation_id_created_at_idx
 alter table public.messages enable row level security;
 
 comment on table public.messages is
-  'One row per message within a conversation. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260915170200_inbox_human_replies.sql for this table''s additive Inbox-related columns and its owner-facing insert policy, and 20260915193000_repair_live_rls_policies.sql for the SELECT/DELETE owner policies.';
+  'One row per message within a conversation. This table deliberately tracks only when a row was first written, never when it was last modified. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260915170200_inbox_human_replies.sql for this table''s additive Inbox-related columns and CHECK constraint and its owner-facing insert policy, and 20260915193000_repair_live_rls_policies.sql for the SELECT/DELETE owner policies.';
 
 -- =====================================================================
 -- 6. leads — captured booking/contact leads scoped to a business, with
 --    an optional link back to the conversation that produced them.
 --    Columns confirmed by database.types.ts (LeadRow) and by
---    src/lib/public-widget/runtime.ts's own INSERT (supplies
---    business_id, conversation_id, reference, name, contact, check_in,
---    check_out, guest_count, note, language, source, status,
---    consent_at). check_in/check_out are date-only (never time-of-day)
---    per src/features/leads/api/service.test.ts's own fixture values
---    ('2026-08-14'). reference is deliberately NOT unique-constrained —
---    see the UNCERTAIN note in this migration's own header comment.
---    Enum values (source/status) cross-checked against every literal
---    written anywhere in src/**: source only ever writes 'website';
---    status writes only 'new' on insert (owner-driven status changes
---    use the full LeadStatus union server-side, but no literal beyond
---    'new'/'contacted'/'confirmed'/'lost' — the full known set — appears
---    anywhere).
+--    src/lib/public-widget/runtime.ts's own INSERT. check_in/check_out
+--    are date-only (never time-of-day) per
+--    src/features/leads/api/service.test.ts's own fixture values
+--    ('2026-08-14'). reference IS unique (leads_reference_key) —
+--    VERIFIED live; this migration's first revision incorrectly
+--    documented it as unconstrained (see REVISION 2 above). source/
+--    status vocabularies, check_out >= check_in, and guest_count
+--    1-4 are all VERIFIED live CHECK constraints.
 -- =====================================================================
 create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
@@ -585,7 +640,11 @@ create table if not exists public.leads (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   constraint leads_source_check check (source in ('website', 'instagram', 'whatsapp')),
-  constraint leads_status_check check (status in ('new', 'contacted', 'confirmed', 'lost'))
+  constraint leads_status_check check (status in ('new', 'contacted', 'confirmed', 'lost')),
+  constraint leads_check_out_after_check_in_check
+    check (check_out is null or check_in is null or check_out >= check_in),
+  constraint leads_guest_count_check
+    check (guest_count is null or guest_count between 1 and 4)
 );
 
 do $$
@@ -617,6 +676,27 @@ begin
   end if;
 end $$;
 
+-- Duplicate preflight for leads_reference_key, same pattern as
+-- businesses_public_widget_id_key / businesses_slug_key above.
+do $$
+declare
+  v_dup_count integer;
+begin
+  select count(*) into v_dup_count
+  from (
+    select reference from public.leads
+    group by reference having count(*) > 1
+  ) dupes;
+  if v_dup_count > 0 then
+    raise exception
+      'public.leads has % reference value(s) shared by more than one row — a unique reference index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
+      v_dup_count;
+  end if;
+end $$;
+
+create unique index if not exists leads_reference_key
+  on public.leads (reference);
+
 create index if not exists leads_business_id_created_at_idx
   on public.leads (business_id, created_at desc);
 
@@ -625,14 +705,14 @@ create index if not exists leads_conversation_id_created_at_idx
 
 alter table public.leads enable row level security;
 
-drop trigger if exists set_updated_at_leads on public.leads;
-create trigger set_updated_at_leads
+drop trigger if exists set_updated_at on public.leads;
+create trigger set_updated_at
   before update on public.leads
   for each row
   execute function public.set_updated_at();
 
 comment on table public.leads is
-  'Captured booking/contact leads scoped to a business. Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260915193000_repair_live_rls_policies.sql for its owner-scoped RLS policies. reference has no uniqueness constraint by design — see this migration''s own header comment.';
+  'Captured booking/contact leads scoped to a business. reference is unique (leads_reference_key — VERIFIED live). Baseline shape installed by supabase/migrations/20260910090000_self_contained_database_baseline.sql — see 20260915193000_repair_live_rls_policies.sql for its owner-scoped RLS policies.';
 
 -- =====================================================================
 -- 7. handoffs — human-handoff requests scoped to a business, with an
@@ -640,11 +720,8 @@ comment on table public.leads is
 --    confirmed by database.types.ts (HandoffRow, minus
 --    client_request_id, which 20260918090000_handoff_idempotency.sql's
 --    own header comment documents as its own additive column) and by
---    src/lib/public-widget/runtime.ts's own INSERT (supplies
---    business_id, conversation_id, customer_name, contact, question,
---    status; reason is never set by any code path). Enum values
---    (status) cross-checked: 'new'/'contacted'/'resolved' are all
---    written somewhere in src/**, matching HandoffStatus exactly.
+--    src/lib/public-widget/runtime.ts's own INSERT. status vocabulary
+--    is VERIFIED live.
 -- =====================================================================
 create table if not exists public.handoffs (
   id uuid primary key default gen_random_uuid(),
@@ -696,8 +773,8 @@ create index if not exists handoffs_conversation_id_created_at_idx
 
 alter table public.handoffs enable row level security;
 
-drop trigger if exists set_updated_at_handoffs on public.handoffs;
-create trigger set_updated_at_handoffs
+drop trigger if exists set_updated_at on public.handoffs;
+create trigger set_updated_at
   before update on public.handoffs
   for each row
   execute function public.set_updated_at();
@@ -710,22 +787,8 @@ comment on table public.handoffs is
 --    widget's display configuration. Columns confirmed by
 --    database.types.ts (WidgetSettingsRow, minus widget_enabled/
 --    allowed_origins/installation_confirmed(_at), each documented as
---    additive by its own later migration — see SCOPE above) and by the
---    exact column list 20260922090000_self_contained_user_provisioning.
---    sql's own handle_new_user() inserts:
---      business_id, title, welcome_message_en, welcome_message_me,
---      welcome_message_ru, primary_color, position, mock_ai_enabled,
---      widget_enabled, human_handoff_enabled, allowed_origins,
---      installation_confirmed
---    (the last three of those belong to later migrations per SCOPE
---    above, but that INSERT already only runs after all of this
---    repository's migrations have applied in order, so it is
---    unaffected). business_id's uniqueness is confirmed by four
---    separate `.eq('business_id', ...).maybeSingle()` call sites across
---    src/lib/public-widget/runtime.ts, src/features/widget/api/
---    service.ts, src/app/dashboard/overview/page.tsx, and
---    src/app/onboarding/page.tsx — every one of them assumes at most one
---    widget_settings row exists per business.
+--    additive by its own later migration — see SCOPE above).
+--    business_id is unique and position's vocabulary is VERIFIED live.
 -- =====================================================================
 create table if not exists public.widget_settings (
   id uuid primary key default gen_random_uuid(),
@@ -793,8 +856,8 @@ create unique index if not exists widget_settings_business_id_key
 
 alter table public.widget_settings enable row level security;
 
-drop trigger if exists set_updated_at_widget_settings on public.widget_settings;
-create trigger set_updated_at_widget_settings
+drop trigger if exists set_updated_at on public.widget_settings;
+create trigger set_updated_at
   before update on public.widget_settings
   for each row
   execute function public.set_updated_at();
