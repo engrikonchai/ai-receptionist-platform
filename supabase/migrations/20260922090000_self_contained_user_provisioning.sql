@@ -275,5 +275,18 @@ create trigger on_auth_user_created
   for each row
   execute function public.handle_new_user();
 
-comment on trigger on_auth_user_created on auth.users is
-  'Calls public.handle_new_user() to provision a new owner''s profiles/businesses/widget_settings rows. Installed by supabase/migrations/20260922090000_self_contained_user_provisioning.sql, which is this repository''s own authoritative replacement for the equivalent trigger previously maintained outside this repo in the ChatbotDemo project. Exactly one trigger of this name exists on auth.users; rerunning this migration replaces it in place rather than adding a second one.';
+-- No `comment on trigger on_auth_user_created on auth.users` here,
+-- deliberately: a live run of this migration failed with
+-- `ERROR 42501: must be owner of relation users` on exactly that
+-- statement. Supabase permits CREATE TRIGGER/DROP TRIGGER on
+-- auth.users (both above) but COMMENT ON TRIGGER additionally requires
+-- table ownership, and auth.users is owned by supabase_auth_admin, not
+-- the role migrations run as. This migration does not work around that
+-- with SET ROLE, by reassigning auth.users' ownership, or by granting
+-- itself/any role elevated privileges on Supabase-managed auth objects
+-- — it simply omits the comment. See this function's own
+-- `comment on function public.handle_new_user()` above for the
+-- equivalent documentation (that succeeds: the function lives in
+-- public, owned by this migration's own role). The trigger's purpose
+-- is otherwise fully documented in this file's header comment and the
+-- function comment it calls.

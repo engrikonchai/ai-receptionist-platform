@@ -195,6 +195,30 @@ describe('self-contained user provisioning migration — static contract', () =>
     expect(executableSql).not.toMatch(/pg_trigger/i);
   });
 
+  /**
+   * A live run of this migration failed with
+   * `ERROR 42501: must be owner of relation users` on exactly this
+   * statement — Supabase permits CREATE/DROP TRIGGER on auth.users but
+   * COMMENT ON TRIGGER additionally requires table ownership, and
+   * auth.users is owned by supabase_auth_admin. The fix is to omit the
+   * statement entirely, never to work around the permission error.
+   */
+  it('never issues COMMENT ON TRIGGER targeting auth.users (Supabase: must be owner of relation users)', () => {
+    expect(executableSql).not.toMatch(/comment on trigger[^;]*auth\.users/i);
+    // The function's own comment is unaffected and still present — it
+    // lives in public, owned by this migration's own role.
+    expect(executableSql).toMatch(/comment on function public\.handle_new_user\(\)/);
+  });
+
+  it('never attempts to change ownership or grant/revoke permissions on auth.users, and never uses SET ROLE', () => {
+    expect(executableSql).not.toMatch(/alter table auth\.users/i);
+    expect(executableSql).not.toMatch(/owner to/i);
+    expect(executableSql).not.toMatch(/grant[^;]*on[^;]*auth\.users/i);
+    expect(executableSql).not.toMatch(/revoke[^;]*on[^;]*auth\.users/i);
+    expect(executableSql).not.toMatch(/set role/i);
+    expect(executableSql).not.toMatch(/supabase_auth_admin/i);
+  });
+
   it('never creates, drops, or alters any RLS policy, and never disables RLS', () => {
     expect(executableSql).not.toMatch(/create policy/i);
     expect(executableSql).not.toMatch(/drop policy/i);
