@@ -20,7 +20,18 @@ const nextConfig: NextConfig = {
   },
   transpilePackages: ['geist'],
   compiler: {
-    removeConsole: process.env.NODE_ENV === 'production'
+    // Strips console.log/debug/info/warn from the production build, but
+    // NEVER console.error — every safe, secret-free diagnostic logger
+    // in this app (src/lib/paddle/webhook-signature-diagnostics.ts,
+    // src/features/billing/api/diagnostics.ts,
+    // src/app/api/paddle/webhook/route.ts, src/features/inbox/,
+    // src/lib/public-widget/) calls console.error specifically so it
+    // survives this compiler option and reaches Vercel's Runtime Logs.
+    // A bare `removeConsole: true` (no `exclude`) strips console.error
+    // too — verified against the compiled production output, where it
+    // silently erased every diagnostic call above, including a request
+    // that legitimately failed and returned a 400.
+    removeConsole: process.env.NODE_ENV === 'production' ? { exclude: ['error'] } : false
   }
 };
 
