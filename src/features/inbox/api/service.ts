@@ -30,22 +30,22 @@ const CONVERSATION_LIST_LIMIT = 50;
 const MESSAGE_PREVIEW_SAMPLE_LIMIT = 500;
 const MESSAGE_PREVIEW_MAX_LENGTH = 140;
 
+const INBOX_DIAGNOSTIC_LOG_PREFIX = '[inbox:diagnostic]';
+
 /**
- * Temporary, safe diagnostics for the "Inbox shows 0 conversations"
- * investigation — logs only the resolved business id, the table
- * queried, the row count, and the Postgres error code/message (never
- * row contents, tokens, cookies, or any other secret). Goes to
- * `console.error` so it's captured by Vercel's request logs. Remove
- * once the production cause is confirmed and resolved.
+ * Safe, error-only diagnostic logging for a failed Inbox query —
+ * NEVER called on success, so a normal Inbox load never touches
+ * `console.error` at all. Logs only `stage` (a fixed, short label
+ * naming which query failed) and the Supabase/Postgres error `code`
+ * (a short enum-like string such as "42501" or "PGRST116") — a strict
+ * whitelist. Never logs a business id, row contents, message content,
+ * contact information, or the error's own message/details/hint, any
+ * of which could embed identifying or customer data.
  */
-function logInboxQueryDiagnostic(info: {
-  businessId: string;
-  table: string;
-  rowCount: number | null;
-  errorCode?: string | null;
-  errorMessage?: string | null;
-}) {
-  console.error('[inbox:diagnostic]', JSON.stringify(info));
+function logInboxQueryFailure(stage: string, code: string | null | undefined): void {
+  const safe: Record<string, unknown> = { stage };
+  if (typeof code === 'string') safe.code = code;
+  console.error(INBOX_DIAGNOSTIC_LOG_PREFIX, JSON.stringify(safe));
 }
 
 function truncatePreview(text: string): string {
@@ -91,15 +91,10 @@ export async function fetchConversations(businessId: string): Promise<Conversati
     .order('updated_at', { ascending: false })
     .limit(CONVERSATION_LIST_LIMIT);
 
-  logInboxQueryDiagnostic({
-    businessId: verifiedId,
-    table: 'conversations',
-    rowCount: conversations?.length ?? null,
-    errorCode: error?.code,
-    errorMessage: error?.message
-  });
-
-  if (error) throw new Error('We could not load conversations. Please try again.');
+  if (error) {
+    logInboxQueryFailure('conversations_query', error.code);
+    throw new Error('We could not load conversations. Please try again.');
+  }
 
   const rows = (conversations ?? []) as ConversationRow[];
   if (rows.length === 0) return [];
@@ -131,27 +126,9 @@ export async function fetchConversations(businessId: string): Promise<Conversati
       .order('created_at', { ascending: false })
   ]);
 
-  logInboxQueryDiagnostic({
-    businessId: verifiedId,
-    table: 'messages',
-    rowCount: recentMessages?.length ?? null,
-    errorCode: messagesError?.code,
-    errorMessage: messagesError?.message
-  });
-  logInboxQueryDiagnostic({
-    businessId: verifiedId,
-    table: 'leads',
-    rowCount: leads?.length ?? null,
-    errorCode: leadsError?.code,
-    errorMessage: leadsError?.message
-  });
-  logInboxQueryDiagnostic({
-    businessId: verifiedId,
-    table: 'handoffs',
-    rowCount: handoffs?.length ?? null,
-    errorCode: handoffsError?.code,
-    errorMessage: handoffsError?.message
-  });
+  if (messagesError) logInboxQueryFailure('messages_enrichment', messagesError.code);
+  if (leadsError) logInboxQueryFailure('leads_enrichment', leadsError.code);
+  if (handoffsError) logInboxQueryFailure('handoffs_enrichment', handoffsError.code);
 
   // Each enrichment source (message previews, leads, handoffs) is
   // independent and best-effort — a failure in any one of them (e.g. a
