@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SupabaseClient, User } from '@supabase/supabase-js';
 import { verifyActiveBusiness } from './authorize';
 import { SESSION_EXPIRED_MESSAGE } from './types';
@@ -60,13 +60,22 @@ function mockVerifiedBusiness(from: ReturnType<typeof vi.fn>) {
   });
 }
 
+let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
 beforeEach(() => {
   vi.clearAllMocks();
-  // service.ts logs safe, temporary diagnostics (see logInboxQueryDiagnostic)
-  // on every fetchConversations call — silence them so test output stays
-  // readable; the diagnostics' content itself isn't what these tests verify.
-  vi.spyOn(console, 'error').mockImplementation(() => {});
+  consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 });
+
+afterEach(() => {
+  consoleErrorSpy.mockRestore();
+});
+
+function loggedDiagnostics(): Array<Record<string, unknown>> {
+  return consoleErrorSpy.mock.calls
+    .filter((call: unknown[]) => call[0] === '[inbox:diagnostic]')
+    .map((call: unknown[]) => JSON.parse(call[1] as string));
+}
 
 describe('fetchConversations', () => {
   it('propagates the authorization failure instead of querying anything', async () => {
@@ -86,6 +95,35 @@ describe('fetchConversations', () => {
 
     expect(result).toEqual([]);
     expect(from).toHaveBeenCalledTimes(1);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it('never calls console.error on a fully successful Inbox load — the previous always-on diagnostic is gone', async () => {
+    const conversationRow = {
+      id: 'conv-1',
+      business_id: VERIFIED_BUSINESS_ID,
+      visitor_id: 'visitor-1',
+      channel: 'website',
+      detected_language: 'en',
+      status: 'open',
+      human_takeover: false,
+      lead_created: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z'
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: [conversationRow], error: null })) // conversations
+      .mockReturnValueOnce(chainable({ data: [], error: null })) // messages
+      .mockReturnValueOnce(chainable({ data: [], error: null })) // leads
+      .mockReturnValueOnce(chainable({ data: [], error: null })); // handoffs
+    mockVerifiedBusiness(from);
+
+    await fetchConversations('biz-1');
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(loggedDiagnostics()).toEqual([]);
   });
 
   it('enriches each conversation with its lead name, latest message preview and handoff status, and never returns the raw visitor id', async () => {
@@ -145,6 +183,8 @@ describe('fetchConversations', () => {
     expect(item.handoffStatus).toBe('new');
     expect(item.maskedVisitorId).not.toContain(conversationRow.visitor_id);
     expect(JSON.stringify(item)).not.toContain(conversationRow.visitor_id);
+    // A fully successful, fully enriched load never touches console.error.
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
   it('falls back to a masked, channel-neutral name and null handoff status when there is no lead or handoff', async () => {
@@ -179,15 +219,18 @@ describe('fetchConversations', () => {
     expect(item.latestMessagePreview).toBeNull();
   });
 
-  it('throws a generic error when the primary conversations query fails', async () => {
+  it('throws a generic error when the primary conversations query fails, logging only the whitelisted stage and code', async () => {
     const from = vi
       .fn()
-      .mockReturnValueOnce(chainable({ data: null, error: { message: 'db down' } }));
+      .mockReturnValueOnce(
+        chainable({ data: null, error: { code: '57014', message: 'statement timeout' } })
+      );
     mockVerifiedBusiness(from);
 
     await expect(fetchConversations('biz-1')).rejects.toThrow(
       'We could not load conversations. Please try again.'
     );
+    expect(loggedDiagnostics()).toEqual([{ stage: 'conversations_query', code: '57014' }]);
   });
 
   /**
@@ -233,6 +276,20 @@ describe('fetchConversations', () => {
     expect(result[0].id).toBe('conv-1');
     expect(result[0].hasLeadName).toBe(false);
     expect(result[0].leadContact).toBeNull();
+
+    // Exactly one diagnostic, for the failing enrichment only — the
+    // successful conversations/messages/handoffs queries never log —
+    // and it contains only the whitelisted stage + error code, never
+    // the business id or the raw "permission denied for table leads"
+    // message.
+    expect(loggedDiagnostics()).toEqual([{ stage: 'leads_enrichment', code: '42501' }]);
+    const allLoggedText = consoleErrorSpy.mock.calls
+      .map((call: unknown[]) =>
+        call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
+      )
+      .join('\n');
+    expect(allLoggedText).not.toContain(VERIFIED_BUSINESS_ID);
+    expect(allLoggedText).not.toContain('permission denied');
   });
 
   it('still returns every conversation when the messages and handoffs enrichment queries also fail', async () => {
@@ -265,6 +322,14 @@ describe('fetchConversations', () => {
     expect(result[0].id).toBe('conv-1');
     expect(result[0].latestMessagePreview).toBeNull();
     expect(result[0].handoffStatus).toBeNull();
+
+    // One whitelisted diagnostic per failing enrichment — three total —
+    // each carrying only its own stage and the shared error code.
+    expect(loggedDiagnostics()).toEqual([
+      { stage: 'messages_enrichment', code: '42501' },
+      { stage: 'leads_enrichment', code: '42501' },
+      { stage: 'handoffs_enrichment', code: '42501' }
+    ]);
   });
 
   /**
@@ -308,6 +373,56 @@ describe('fetchConversations', () => {
 
     expect(result).toHaveLength(5);
     expect(result.map((c) => c.id)).toEqual(['conv-1', 'conv-2', 'conv-3', 'conv-4', 'conv-5']);
+  });
+
+  it('never logs the business id, contact information, or message content — even when a Postgres error tries to smuggle them in via its own message/details/hint', async () => {
+    const conversationRow = {
+      id: 'conv-1',
+      business_id: VERIFIED_BUSINESS_ID,
+      visitor_id: 'visitor-1',
+      channel: 'website',
+      detected_language: 'en',
+      status: 'open',
+      human_takeover: false,
+      lead_created: false,
+      created_at: '2026-01-01T00:00:00Z',
+      updated_at: '2026-01-02T00:00:00Z'
+    };
+    const leakyError = {
+      code: '42501',
+      message: `permission denied for business ${VERIFIED_BUSINESS_ID}`,
+      details: 'Contact: sarah@example.com, phone +382 67 123 456',
+      hint: 'Message content: "Can I get a discount for a 4-night stay?"'
+    };
+
+    const from = vi
+      .fn()
+      .mockReturnValueOnce(chainable({ data: [conversationRow], error: null })) // conversations
+      .mockReturnValueOnce(chainable({ data: null, error: leakyError })) // messages — fails
+      .mockReturnValueOnce(chainable({ data: null, error: leakyError })) // leads — fails
+      .mockReturnValueOnce(chainable({ data: null, error: leakyError })); // handoffs — fails
+    mockVerifiedBusiness(from);
+
+    await fetchConversations('biz-1');
+
+    const allLoggedText = consoleErrorSpy.mock.calls
+      .map((call: unknown[]) =>
+        call.map((arg) => (typeof arg === 'string' ? arg : JSON.stringify(arg))).join(' ')
+      )
+      .join('\n');
+
+    expect(allLoggedText).not.toContain(VERIFIED_BUSINESS_ID);
+    expect(allLoggedText).not.toContain('sarah@example.com');
+    expect(allLoggedText).not.toContain('382 67 123 456');
+    expect(allLoggedText).not.toContain('discount for a 4-night stay');
+    expect(allLoggedText).not.toContain('permission denied');
+    expect(allLoggedText).not.toContain('Contact:');
+    expect(allLoggedText).not.toContain('Message content:');
+
+    // Only the whitelisted { stage, code } shape ever made it through.
+    for (const diagnostic of loggedDiagnostics()) {
+      expect(Object.keys(diagnostic).toSorted()).toEqual(['code', 'stage']);
+    }
   });
 });
 
