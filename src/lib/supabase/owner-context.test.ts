@@ -201,3 +201,97 @@ describe('loadOwnerContext', () => {
     }
   });
 });
+
+/**
+ * Exercises loadOwnerContext() against the exact row shape
+ * supabase/migrations/20260922090000_self_contained_user_provisioning.sql's
+ * handle_new_user() trigger produces for a brand-new signup — proving
+ * the application side of self-contained provisioning, since the
+ * trigger itself can't run against a live Postgres instance in this
+ * environment (see that migration's own static contract test).
+ */
+function freshlyProvisionedBusiness(overrides: Partial<BusinessRow> = {}): BusinessRow {
+  return {
+    id: 'biz-fresh',
+    owner_id: 'user-fresh',
+    name: 'Adria Stay Budva',
+    slug: 'business-freshuuid',
+    public_widget_id: 'widget-fresh-uuid',
+    business_type: 'hotel',
+    location: 'Budva, Montenegro',
+    default_language: 'en',
+    supported_languages: ['en'],
+    handoff_email: null,
+    is_active: true,
+    created_at: '2026-09-22T09:00:00.000Z',
+    updated_at: '2026-09-22T09:00:00.000Z',
+    ...overrides
+  } as BusinessRow;
+}
+
+describe('loadOwnerContext — freshly provisioned owner (self-contained provisioning)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('resolves to status ok with exactly the one seeded business for a brand-new owner', async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      stubSupabase({
+        user: { id: 'user-fresh' },
+        profile: { id: 'user-fresh', display_name: 'Jane Doe', onboarding_completed: false },
+        businesses: [freshlyProvisionedBusiness()]
+      })
+    );
+
+    const ctx = await loadOwnerContext();
+
+    expect(ctx.status).toBe('ok');
+    if (ctx.status === 'ok') {
+      expect(ctx.businesses).toHaveLength(1);
+      expect(ctx.businesses[0].owner_id).toBe('user-fresh');
+      expect(ctx.profile.onboarding_completed).toBe(false);
+    }
+  });
+
+  it('still resolves correctly when the profile has no display_name (missing/optional signup metadata)', async () => {
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      stubSupabase({
+        user: { id: 'user-fresh', email: 'owner@example.com' },
+        profile: { id: 'user-fresh', display_name: null, onboarding_completed: false },
+        businesses: [freshlyProvisionedBusiness()]
+      })
+    );
+
+    const ctx = await loadOwnerContext();
+
+    expect(ctx.status).toBe('ok');
+    if (ctx.status === 'ok') {
+      expect(ctx.profile.display_name).toBeNull();
+      expect(ctx.businesses).toHaveLength(1);
+    }
+  });
+
+  it('never logs the new owner’s email, user id, or business id while resolving a freshly provisioned account', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    vi.mocked(createSupabaseServerClient).mockResolvedValue(
+      stubSupabase({
+        user: { id: 'user-fresh', email: 'owner@example.com' },
+        profile: { id: 'user-fresh', display_name: 'Jane Doe', onboarding_completed: false },
+        businesses: [freshlyProvisionedBusiness()]
+      })
+    );
+
+    await loadOwnerContext();
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleLogSpy.mockRestore();
+  });
+});
