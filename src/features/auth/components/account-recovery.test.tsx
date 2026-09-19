@@ -50,3 +50,22 @@ describe('AccountRecovery — sign out', () => {
     expect(refresh).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('AccountRecovery — multiple_businesses variant (V1 fail-closed case)', () => {
+  it('renders a safe, generic message that never names a business, id, or count', () => {
+    render(<AccountRecovery email='owner@example.com' variant='multiple_businesses' />);
+
+    expect(screen.getByText('owner@example.com')).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/\d+ business/i);
+    expect(document.body.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}-/i);
+    // Same recovery actions as the no_business variant — Try again / Sign out.
+    expect(screen.getByRole('button', { name: /Try again/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Sign out/ })).toBeInTheDocument();
+  });
+
+  it('defaults to the no_business copy when no variant is given (unchanged existing behavior)', () => {
+    render(<AccountRecovery email='owner@example.com' />);
+
+    expect(screen.getByText(/couldn.t find a business linked to it yet/i)).toBeInTheDocument();
+  });
+});

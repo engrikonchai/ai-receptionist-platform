@@ -47,6 +47,19 @@ describe('verifyActiveBusiness', () => {
     expect(result).toEqual({ ok: false, error: NO_BUSINESS_ACCESS_MESSAGE });
   });
 
+  it('fails closed on the V1 multiple_businesses guard — never picks an arbitrary business from an ambiguous owner state', async () => {
+    vi.mocked(loadOwnerContext).mockResolvedValue({
+      status: 'multiple_businesses',
+      user: stubUser,
+      businessCount: 2,
+      supabase: stubSupabase
+    });
+
+    const result = await verifyActiveBusiness('biz-1');
+
+    expect(result).toEqual({ ok: false, error: NO_BUSINESS_ACCESS_MESSAGE });
+  });
+
   it('rejects a business id that is not in the RLS-scoped businesses this owner can see — the cross-business/ownership guard', async () => {
     vi.mocked(loadOwnerContext).mockResolvedValue({
       status: 'ok',
@@ -78,5 +91,37 @@ describe('verifyActiveBusiness', () => {
       expect(result.ctx.user).toBe(stubUser);
       expect(result.ctx.supabase).toBe(stubSupabase);
     }
+  });
+
+  it('never logs a business id anywhere — a rejected cross-business id, an ambiguous multiple_businesses state, or a normal accept', async () => {
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+    vi.mocked(loadOwnerContext).mockResolvedValue({
+      status: 'ok',
+      user: stubUser,
+      profile: {} as never,
+      businesses: [business('biz-owned')],
+      supabase: stubSupabase
+    });
+    await verifyActiveBusiness('biz-someone-elses');
+    await verifyActiveBusiness('biz-owned');
+
+    vi.mocked(loadOwnerContext).mockResolvedValue({
+      status: 'multiple_businesses',
+      user: stubUser,
+      businessCount: 2,
+      supabase: stubSupabase
+    });
+    await verifyActiveBusiness('biz-owned');
+
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+    expect(consoleWarnSpy).not.toHaveBeenCalled();
+    expect(consoleLogSpy).not.toHaveBeenCalled();
+
+    consoleErrorSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+    consoleLogSpy.mockRestore();
   });
 });

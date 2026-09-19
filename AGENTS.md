@@ -20,6 +20,18 @@ The project follows a feature-based folder structure designed for scalability in
 
 ---
 
+## Tenancy Model (V1)
+
+This specific deployment of the template (the AI receptionist platform) enforces a strict single-business-per-owner rule, backed by a database constraint (`supabase/migrations/20260921090000_single_business_per_owner.sql`) and the fail-closed `multiple_businesses` status in `src/lib/supabase/owner-context.ts`:
+
+- One authenticated owner account owns exactly one business. Every different customer/company signs up its own separate account.
+- Each business has its own isolated workspace: Knowledge Base, widget, conversations, leads, handoffs, and Paddle subscription, scoped by `business_id`/`owner_id` and Row Level Security.
+- Billing is per business (one Paddle subscription per business), not per account.
+- Staff/team access (more than one user per business) is a separate future feature, not part of V1.
+- Multi-business ownership and switching between businesses are explicitly out of scope for V1 — see the migration's own comment for what relaxing this later requires.
+
+---
+
 ## Technology Stack Details
 
 ### Core Framework & Runtime
