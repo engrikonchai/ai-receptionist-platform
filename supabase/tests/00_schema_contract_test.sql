@@ -10,23 +10,57 @@ select * from no_plan();
 
 -- =====================================================================
 -- Helpers (session-local; gone once this transaction ends)
+--
+-- Built on pg_catalog (pg_constraint/pg_class/pg_namespace/pg_attribute),
+-- never information_schema. information_schema's FK-related views
+-- (key_column_usage, constraint_column_usage, referential_constraints)
+-- are privilege-filtered: a row for a given constraint is only visible
+-- to the querying role if that role owns, or holds an explicit
+-- column-level privilege on, BOTH sides of the constraint. auth.users is
+-- owned by supabase_auth_admin, not the role migrations/tests connect
+-- as — confirmed locally: the exact information_schema join this file
+-- used before returns zero rows for a non-superuser role with no
+-- explicit grant on auth.users, even though the FK genuinely exists
+-- (`pg_get_constraintdef()` still shows it correctly for that same
+-- role). pg_catalog carries no such filter — SELECT on it is granted to
+-- PUBLIC unconditionally — so every helper below reads pg_constraint
+-- directly and resolves both the referencing and referenced sides via
+-- pg_class/pg_namespace/pg_attribute, regardless of who owns what.
 -- =====================================================================
 create or replace function pg_temp.fk_target(p_schema text, p_table text, p_column text)
 returns text
 language sql
 as $$
-  select ccu.table_schema || '.' || ccu.table_name
-  from information_schema.key_column_usage kcu
-  join information_schema.table_constraints tc
-    on tc.constraint_name = kcu.constraint_name
-   and tc.constraint_schema = kcu.constraint_schema
-  join information_schema.constraint_column_usage ccu
-    on ccu.constraint_name = tc.constraint_name
-   and ccu.constraint_schema = tc.constraint_schema
-  where tc.constraint_type = 'FOREIGN KEY'
-    and kcu.table_schema = p_schema
-    and kcu.table_name = p_table
-    and kcu.column_name = p_column
+  select tgt_ns.nspname || '.' || tgt_cls.relname
+  from pg_constraint con
+  join pg_class src_cls on src_cls.oid = con.conrelid
+  join pg_namespace src_ns on src_ns.oid = src_cls.relnamespace
+  join pg_attribute src_att on src_att.attrelid = con.conrelid and src_att.attnum = con.conkey[1]
+  join pg_class tgt_cls on tgt_cls.oid = con.confrelid
+  join pg_namespace tgt_ns on tgt_ns.oid = tgt_cls.relnamespace
+  where con.contype = 'f'
+    and src_ns.nspname = p_schema
+    and src_cls.relname = p_table
+    and src_att.attname = p_column
+    and cardinality(con.conkey) = 1
+  limit 1;
+$$;
+
+create or replace function pg_temp.fk_target_column(p_schema text, p_table text, p_column text)
+returns text
+language sql
+as $$
+  select tgt_att.attname
+  from pg_constraint con
+  join pg_class src_cls on src_cls.oid = con.conrelid
+  join pg_namespace src_ns on src_ns.oid = src_cls.relnamespace
+  join pg_attribute src_att on src_att.attrelid = con.conrelid and src_att.attnum = con.conkey[1]
+  join pg_attribute tgt_att on tgt_att.attrelid = con.confrelid and tgt_att.attnum = con.confkey[1]
+  where con.contype = 'f'
+    and src_ns.nspname = p_schema
+    and src_cls.relname = p_table
+    and src_att.attname = p_column
+    and cardinality(con.conkey) = 1
   limit 1;
 $$;
 
@@ -34,18 +68,44 @@ create or replace function pg_temp.fk_delete_rule(p_schema text, p_table text, p
 returns text
 language sql
 as $$
-  select rc.delete_rule
-  from information_schema.key_column_usage kcu
-  join information_schema.table_constraints tc
-    on tc.constraint_name = kcu.constraint_name
-   and tc.constraint_schema = kcu.constraint_schema
-  join information_schema.referential_constraints rc
-    on rc.constraint_name = tc.constraint_name
-   and rc.constraint_schema = tc.constraint_schema
-  where tc.constraint_type = 'FOREIGN KEY'
-    and kcu.table_schema = p_schema
-    and kcu.table_name = p_table
-    and kcu.column_name = p_column
+  select case con.confdeltype
+    when 'a' then 'NO ACTION'
+    when 'r' then 'RESTRICT'
+    when 'c' then 'CASCADE'
+    when 'n' then 'SET NULL'
+    when 'd' then 'SET DEFAULT'
+  end
+  from pg_constraint con
+  join pg_class src_cls on src_cls.oid = con.conrelid
+  join pg_namespace src_ns on src_ns.oid = src_cls.relnamespace
+  join pg_attribute src_att on src_att.attrelid = con.conrelid and src_att.attnum = con.conkey[1]
+  where con.contype = 'f'
+    and src_ns.nspname = p_schema
+    and src_cls.relname = p_table
+    and src_att.attname = p_column
+    and cardinality(con.conkey) = 1
+  limit 1;
+$$;
+
+-- The exact, human-readable constraint definition pg_get_constraintdef()
+-- produces — a second, belt-and-suspenders proof for the one FK this
+-- migration's first revision got wrong (see REVISION 2 in
+-- 20260910090000_self_contained_database_baseline.sql): profiles.id ->
+-- auth.users(id) ON DELETE CASCADE.
+create or replace function pg_temp.fk_constraintdef(p_schema text, p_table text, p_column text)
+returns text
+language sql
+as $$
+  select pg_get_constraintdef(con.oid)
+  from pg_constraint con
+  join pg_class src_cls on src_cls.oid = con.conrelid
+  join pg_namespace src_ns on src_ns.oid = src_cls.relnamespace
+  join pg_attribute src_att on src_att.attrelid = con.conrelid and src_att.attnum = con.conkey[1]
+  where con.contype = 'f'
+    and src_ns.nspname = p_schema
+    and src_cls.relname = p_table
+    and src_att.attname = p_column
+    and cardinality(con.conkey) = 1
   limit 1;
 $$;
 
@@ -74,8 +134,17 @@ select ok(to_regclass('public.widget_rate_limits') is not null, 'public.widget_r
 -- =====================================================================
 -- Verified foreign key targets and ON DELETE rules
 -- =====================================================================
-select is(pg_temp.fk_target('public', 'profiles', 'id'), 'auth.users', 'profiles.id references auth.users');
-select is(pg_temp.fk_delete_rule('public', 'profiles', 'id'), 'CASCADE', 'profiles.id -> auth.users is ON DELETE CASCADE');
+-- profiles.id -> auth.users(id) ON DELETE CASCADE — proven four
+-- independent ways: referenced table, referenced column, delete
+-- action, and the full pg_get_constraintdef() text.
+select is(pg_temp.fk_target('public', 'profiles', 'id'), 'auth.users', 'profiles.id references auth.users (referenced table)');
+select is(pg_temp.fk_target_column('public', 'profiles', 'id'), 'id', 'profiles.id references auth.users.id (referenced column)');
+select is(pg_temp.fk_delete_rule('public', 'profiles', 'id'), 'CASCADE', 'profiles.id -> auth.users is ON DELETE CASCADE (delete action)');
+select is(
+  pg_temp.fk_constraintdef('public', 'profiles', 'id'),
+  'FOREIGN KEY (id) REFERENCES auth.users(id) ON DELETE CASCADE',
+  'profiles.id -> auth.users(id) ON DELETE CASCADE (full constraint definition)'
+);
 
 select is(pg_temp.fk_target('public', 'businesses', 'owner_id'), 'public.profiles', 'businesses.owner_id references public.profiles, not auth.users');
 select is(pg_temp.fk_delete_rule('public', 'businesses', 'owner_id'), 'CASCADE', 'businesses.owner_id -> profiles is ON DELETE CASCADE');

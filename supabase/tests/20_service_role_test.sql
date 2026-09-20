@@ -118,9 +118,51 @@ select lives_ok(
 reset role;
 
 -- ---------------------------------------------------------------------
+-- Grant-level assertions: PUBLIC/anon/authenticated lack EXECUTE and
+-- service_role has it, checked directly via has_function_privilege()
+-- rather than only inferred from a failed/succeeded call — the exact
+-- gap that let 20260916130000_widget_rate_limits.sql's own
+-- `revoke all ... from public` (without also revoking from anon/
+-- authenticated) go undetected: this project's own default privileges
+-- grant EXECUTE on new functions directly to anon/authenticated, which
+-- revoking from PUBLIC alone never touches. See
+-- 20260923090000_harden_rate_limit_rpc_grants.sql for the fix.
+-- ---------------------------------------------------------------------
+select is(
+  (
+    select count(*)::int
+    from (values
+      ('public', 'public.check_and_increment_rate_limit(text,integer,integer)'),
+      ('anon', 'public.check_and_increment_rate_limit(text,integer,integer)'),
+      ('authenticated', 'public.check_and_increment_rate_limit(text,integer,integer)'),
+      ('public', 'public.cleanup_expired_widget_rate_limits(integer)'),
+      ('anon', 'public.cleanup_expired_widget_rate_limits(integer)'),
+      ('authenticated', 'public.cleanup_expired_widget_rate_limits(integer)')
+    ) as role_fn(role_name, fn_signature)
+    where has_function_privilege(role_name, fn_signature, 'EXECUTE')
+  ),
+  0,
+  'PUBLIC, anon, and authenticated all lack EXECUTE on both rate-limit RPCs'
+);
+
+select is(
+  (
+    select count(*)::int
+    from (values
+      ('service_role', 'public.check_and_increment_rate_limit(text,integer,integer)'),
+      ('service_role', 'public.cleanup_expired_widget_rate_limits(integer)')
+    ) as role_fn(role_name, fn_signature)
+    where has_function_privilege(role_name, fn_signature, 'EXECUTE')
+  ),
+  2,
+  'service_role has EXECUTE on both rate-limit RPCs'
+);
+
+-- ---------------------------------------------------------------------
 -- authenticated: none of the above RPCs are reachable — EXECUTE was
--- revoked from PUBLIC/authenticated and granted only to service_role
--- (see 20260916130000_widget_rate_limits.sql and
+-- revoked from PUBLIC/anon/authenticated and granted only to
+-- service_role (see 20260916130000_widget_rate_limits.sql +
+-- 20260923090000_harden_rate_limit_rpc_grants.sql, and
 -- 20260920100000_paddle_billing_foundation.sql).
 -- ---------------------------------------------------------------------
 select set_config('request.jwt.claims', json_build_object('sub', (select value from fixtures where key = 'owner_id')::text, 'role', 'authenticated')::text, true);
@@ -137,6 +179,12 @@ select throws_ok(
   'authenticated cannot execute check_and_increment_rate_limit() (service-role-only)'
 );
 select throws_ok(
+  $sql$select public.cleanup_expired_widget_rate_limits(0)$sql$,
+  '42501',
+  null,
+  'authenticated cannot execute cleanup_expired_widget_rate_limits() (service-role-only)'
+);
+select throws_ok(
   format(
     $sql$select public.sync_business_subscription(%L::uuid, null, null, null, null, null, null, null, 'active', null, null, null, null, false, null)$sql$,
     (select value from fixtures where key = 'business_id')
@@ -146,8 +194,70 @@ select throws_ok(
   'authenticated cannot execute sync_business_subscription() (service-role-only)'
 );
 
+-- Service-role-only tables remain inaccessible to authenticated too —
+-- REVOKEd explicitly in their own migrations, not merely undefended by
+-- RLS (see supabase/tests/10_rls_isolation_test.sql for the same proof
+-- from an actual owner's perspective, with real business/fixture data).
+select throws_ok(
+  'select 1 from public.billing_checkout_attempts limit 1',
+  '42501',
+  null,
+  'authenticated cannot select billing_checkout_attempts (service-role-only)'
+);
+select throws_ok(
+  'select 1 from public.paddle_webhook_events limit 1',
+  '42501',
+  null,
+  'authenticated cannot select paddle_webhook_events (service-role-only)'
+);
+select throws_ok(
+  'select 1 from public.widget_rate_limits limit 1',
+  '42501',
+  null,
+  'authenticated cannot select widget_rate_limits (service-role-only)'
+);
+
 reset role;
 select set_config('request.jwt.claims', '', true);
+
+-- ---------------------------------------------------------------------
+-- anon: the same RPCs and tables are equally unreachable — signed-out
+-- visitors are never a valid caller for any of this.
+-- ---------------------------------------------------------------------
+set local role anon;
+
+select throws_ok(
+  $sql$select public.check_and_increment_rate_limit('pgtap-rate-limit-bucket', 5, 60)$sql$,
+  '42501',
+  null,
+  'anon cannot execute check_and_increment_rate_limit() (service-role-only)'
+);
+select throws_ok(
+  $sql$select public.cleanup_expired_widget_rate_limits(0)$sql$,
+  '42501',
+  null,
+  'anon cannot execute cleanup_expired_widget_rate_limits() (service-role-only)'
+);
+select throws_ok(
+  'select 1 from public.billing_checkout_attempts limit 1',
+  '42501',
+  null,
+  'anon cannot select billing_checkout_attempts (service-role-only)'
+);
+select throws_ok(
+  'select 1 from public.paddle_webhook_events limit 1',
+  '42501',
+  null,
+  'anon cannot select paddle_webhook_events (service-role-only)'
+);
+select throws_ok(
+  'select 1 from public.widget_rate_limits limit 1',
+  '42501',
+  null,
+  'anon cannot select widget_rate_limits (service-role-only)'
+);
+
+reset role;
 
 select * from finish();
 rollback;

@@ -1,0 +1,71 @@
+-- Security hardening: PUBLIC/anon/authenticated retained direct EXECUTE
+-- on two service-role-only rate-limit RPCs, despite
+-- 20260916130000_widget_rate_limits.sql already issuing
+-- `revoke all on function ... from public;` for both. Confirmed against
+-- the real local Supabase CLI stack by this branch's own
+-- 20_service_role_test.sql pgTAP test:
+--
+--   20_service_role_test.sql — test 13
+--   "authenticated cannot execute check_and_increment_rate_limit()"
+--   caught: no exception
+--   wanted SQLSTATE: 42501
+--
+-- Root cause: `revoke all ... from public` only removes the privilege a
+-- role holds *via* being a member of PUBLIC. This Supabase project's own
+-- default privileges additionally grant EXECUTE on every new
+-- public-schema function directly to `anon`/`authenticated` (confirmed
+-- by inspecting `has_function_privilege('authenticated',
+-- 'public.check_and_increment_rate_limit(text,integer,integer)',
+-- 'EXECUTE')` — true before this migration) — a direct, per-role grant
+-- that revoking from PUBLIC alone can never touch. This is exactly the
+-- same category of default-privilege exposure this repo's own
+-- 20260910090000_self_contained_database_baseline.sql documents for
+-- *tables* (every migration in this repo relies on that same project
+-- default to make plain owner-scoped tables reachable at all — see that
+-- migration's own GRANTS section) — the mistake here was assuming
+-- `revoke ... from public` was sufficient for *functions* too, without
+-- separately revoking the direct per-role grants.
+--
+-- 20260920100000_paddle_billing_foundation.sql's own
+-- sync_business_subscription() already gets this right (`revoke all
+-- ... from public, anon, authenticated;`) — this migration brings
+-- check_and_increment_rate_limit() and cleanup_expired_widget_rate_limits()
+-- up to that same standard.
+--
+-- Forward-only, not an edit to the original migration: production
+-- already has 20260916130000_widget_rate_limits.sql applied with this
+-- same leftover exposure, and this file — not a rewrite of history —
+-- is what actually revokes it there too. Every statement below is
+-- idempotent (a rerun with nothing left to revoke, or with the grant
+-- already in place, is a safe no-op).
+--
+-- Audited every other SECURITY DEFINER / service-only RPC in this
+-- repository's migrations for the identical mistake:
+--   - resolve_widget_config (20260916120000_widget_allowed_origins.sql)
+--     is intentionally granted to anon AND authenticated (the public
+--     widget config lookup) — not service-role-only, out of scope, no
+--     change.
+--   - sync_business_subscription (20260920100000_paddle_billing_foundation.sql)
+--     already revokes from public, anon, AND authenticated explicitly —
+--     already correct, no change.
+--   - handle_new_user (20260922090000_self_contained_user_provisioning.sql)
+--     is a trigger function (`returns trigger`) — Postgres itself
+--     refuses to execute a trigger function outside trigger context
+--     ("trigger functions can only be called as triggers") regardless
+--     of any EXECUTE grant, for every role including a hypothetical
+--     leaked default one. Not an identical exposure (nothing to revoke
+--     that would change actual reachability), so deliberately left
+--     alone rather than adding a no-op revoke here.
+--   - check_and_increment_rate_limit and
+--     cleanup_expired_widget_rate_limits (20260916130000_widget_rate_limits.sql)
+--     are the two confirmed exposures this migration fixes below.
+--
+-- Does not touch table-level RLS, does not add or change any policy,
+-- and does not touch any table grant — this migration is scoped
+-- entirely to these two functions' own EXECUTE privilege.
+
+revoke all on function public.check_and_increment_rate_limit(text, integer, integer) from public, anon, authenticated;
+grant execute on function public.check_and_increment_rate_limit(text, integer, integer) to service_role;
+
+revoke all on function public.cleanup_expired_widget_rate_limits(integer) from public, anon, authenticated;
+grant execute on function public.cleanup_expired_widget_rate_limits(integer) to service_role;
