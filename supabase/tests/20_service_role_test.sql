@@ -1,0 +1,153 @@
+-- Service-role-only database operations — proves the specific internal
+-- paths the application's trusted server-side code (webhook handler,
+-- checkout/portal actions, public widget runtime, rate limiter) actually
+-- needs, using only the local `service_role` identity. Never adds a
+-- user-facing policy to make any of this pass — every assertion below
+-- that expects `authenticated` to be denied stays denied by an existing,
+-- already-shipped REVOKE/policy, not by anything this test file adds.
+begin;
+select * from no_plan();
+
+create temporary table fixtures (key text primary key, value uuid);
+grant select on fixtures to anon, authenticated, service_role;
+
+with new_user as (
+  insert into auth.users (
+    instance_id, id, aud, role, email, encrypted_password,
+    email_confirmed_at, raw_app_meta_data, raw_user_meta_data,
+    created_at, updated_at, confirmation_token, email_change,
+    email_change_token_new, recovery_token
+  ) values (
+    '00000000-0000-0000-0000-000000000000', gen_random_uuid(), 'authenticated', 'authenticated',
+    'owner-service-role-test@pgtap.test.local', 'not-a-real-hash-testing-only', now(),
+    '{"provider":"email","providers":["email"]}'::jsonb, '{"display_name":"Service Role Test Owner"}'::jsonb,
+    now(), now(), '', '', '', ''
+  )
+  returning id
+)
+insert into fixtures (key, value) select 'owner_id', id from new_user;
+
+insert into fixtures (key, value)
+select 'business_id', id from public.businesses where owner_id = (select value from fixtures where key = 'owner_id');
+
+select ok(
+  (select value from fixtures where key = 'business_id') is not null,
+  'the test owner was auto-provisioned a business to attach billing/rate-limit fixtures to'
+);
+
+-- ---------------------------------------------------------------------
+-- service_role: billing_checkout_attempts / paddle_webhook_events /
+-- widget_rate_limits
+-- ---------------------------------------------------------------------
+set local role service_role;
+
+select lives_ok(
+  format(
+    $sql$insert into public.billing_checkout_attempts (business_id, status) values (%L, 'pending')$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  'service_role can insert into billing_checkout_attempts'
+);
+select is(
+  (select count(*)::int from public.billing_checkout_attempts where business_id = (select value from fixtures where key = 'business_id')),
+  1,
+  'service_role can read the billing_checkout_attempts row back'
+);
+
+select lives_ok(
+  $sql$insert into public.paddle_webhook_events (paddle_event_id, event_type) values ('evt_pgtap_test_1', 'subscription.created')$sql$,
+  'service_role can insert into paddle_webhook_events'
+);
+select is(
+  (select count(*)::int from public.paddle_webhook_events where paddle_event_id = 'evt_pgtap_test_1'),
+  1,
+  'service_role can read the paddle_webhook_events row back'
+);
+
+select lives_ok(
+  $sql$insert into public.widget_rate_limits (bucket_key, count) values ('pgtap-test-bucket', 1)$sql$,
+  'service_role can insert into widget_rate_limits'
+);
+select is(
+  (select count(*)::int from public.widget_rate_limits where bucket_key = 'pgtap-test-bucket'),
+  1,
+  'service_role can read the widget_rate_limits row back'
+);
+
+-- ---------------------------------------------------------------------
+-- service_role: the subscription-synchronization RPC
+-- (sync_business_subscription) — the one write path
+-- src/lib/paddle/sync.ts uses from the webhook handler.
+-- ---------------------------------------------------------------------
+select lives_ok(
+  format(
+    $sql$select public.sync_business_subscription(
+      %L::uuid, 'ctm_pgtap_test', 'sub_pgtap_test', now(), now(), 1::bigint,
+      'pri_pgtap_test', 'txn_pgtap_test', 'active',
+      null, null, now(), now() + interval '30 days', false, null
+    )$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  'service_role can call public.sync_business_subscription()'
+);
+
+select is(
+  (select status from public.business_subscriptions where business_id = (select value from fixtures where key = 'business_id')),
+  'active',
+  'sync_business_subscription() wrote the expected status onto business_subscriptions'
+);
+
+-- ---------------------------------------------------------------------
+-- service_role: the rate-limit RPCs the public widget runtime uses.
+-- ---------------------------------------------------------------------
+select lives_ok(
+  $sql$select public.check_and_increment_rate_limit('pgtap-rate-limit-bucket', 5, 60)$sql$,
+  'service_role can call public.check_and_increment_rate_limit()'
+);
+
+select ok(
+  (select allowed from public.check_and_increment_rate_limit('pgtap-rate-limit-bucket', 5, 60)) = true,
+  'check_and_increment_rate_limit() reports allowed for a fresh bucket under its limit'
+);
+
+select lives_ok(
+  $sql$select public.cleanup_expired_widget_rate_limits(0)$sql$,
+  'service_role can call public.cleanup_expired_widget_rate_limits()'
+);
+
+reset role;
+
+-- ---------------------------------------------------------------------
+-- authenticated: none of the above RPCs are reachable — EXECUTE was
+-- revoked from PUBLIC/authenticated and granted only to service_role
+-- (see 20260916130000_widget_rate_limits.sql and
+-- 20260920100000_paddle_billing_foundation.sql).
+-- ---------------------------------------------------------------------
+select set_config('request.jwt.claims', json_build_object('sub', (select value from fixtures where key = 'owner_id')::text, 'role', 'authenticated')::text, true);
+set local role authenticated;
+
+-- throws_ok's 3rd argument matches the exact error message text, which
+-- this file doesn't want to pin — pass null there and put the
+-- description as the 4th argument instead. 42501 (insufficient_privilege)
+-- is the real SQLSTATE a revoked EXECUTE grant raises.
+select throws_ok(
+  $sql$select public.check_and_increment_rate_limit('pgtap-rate-limit-bucket', 5, 60)$sql$,
+  '42501',
+  null,
+  'authenticated cannot execute check_and_increment_rate_limit() (service-role-only)'
+);
+select throws_ok(
+  format(
+    $sql$select public.sync_business_subscription(%L::uuid, null, null, null, null, null, null, null, 'active', null, null, null, null, false, null)$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  '42501',
+  null,
+  'authenticated cannot execute sync_business_subscription() (service-role-only)'
+);
+
+reset role;
+select set_config('request.jwt.claims', '', true);
+
+select * from finish();
+rollback;

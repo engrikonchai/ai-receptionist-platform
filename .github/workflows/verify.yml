@@ -1,17 +1,28 @@
 name: Verify
 
-# Runs the same local verification suite (test/typecheck/lint/format/build/
-# e2e) on every pull request and every push to main. Deliberately requires
-# and exposes NO secrets — no Paddle, Supabase, or other production
-# credentials are configured here, and none are needed: every command
-# below (including `bun run build`) succeeds against this repository with
-# zero environment variables set, since every server-only integration in
-# this app (Supabase, Paddle) fails closed to a safe "not configured"
-# state rather than throwing when its env vars are absent. The Playwright
-# suite (`bun run test:e2e`) builds and runs its own local server with
-# harmless placeholder Supabase values baked in by playwright.config.ts —
-# never a real credential, never a call to Paddle/Supabase or any other
-# external API. Never add a production secret to this workflow.
+# Two independent jobs, both on every pull request and every push to main:
+#   - verify: the local application suite (test/typecheck/lint/format/
+#     build/e2e).
+#   - verify-database: a from-scratch local Supabase Docker stack proving
+#     this repository's own migration chain applies to a genuinely blank
+#     database, provisions a new owner, and enforces RLS — see
+#     scripts/verify-db.sh and README.md's "Local database verification"
+#     section.
+# Deliberately requires and exposes NO secrets in either job — no Paddle,
+# Supabase, or other production credentials are configured here, and none
+# are needed: every command in the `verify` job (including `bun run
+# build`) succeeds against this repository with zero environment
+# variables set, since every server-only integration in this app
+# (Supabase, Paddle) fails closed to a safe "not configured" state rather
+# than throwing when its env vars are absent. The Playwright suite
+# (`bun run test:e2e`) builds and runs its own local server with harmless
+# placeholder Supabase values baked in by playwright.config.ts. The
+# `verify-database` job talks only to an ephemeral, local-only Supabase
+# stack this job itself starts and tears down (`bun run db:start`/
+# `db:stop` via `bun run verify:db`) — it never links, pushes, or
+# connects to the real production Supabase project, and never uses
+# SUPABASE_ACCESS_TOKEN or any other credential. Never add a production
+# secret to this workflow.
 on:
   pull_request:
   push:
@@ -76,3 +87,28 @@ jobs:
 
       - name: Run end-to-end tests
         run: bun run test:e2e
+
+  verify-database:
+    name: Fresh Supabase database verification
+    runs-on: ubuntu-latest
+    # A cold-start local Supabase Docker stack (image pulls included) plus
+    # two full migration-chain resets and the pgTAP/provisioning suites is
+    # slower than the application job above — generous but still bounded.
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.11'
+
+      - name: Install dependencies (frozen lockfile)
+        run: bun install --frozen-lockfile
+
+      # `ubuntu-latest` GitHub-hosted runners come with Docker (and Docker
+      # Compose, which the Supabase CLI's local stack needs) preinstalled
+      # and already running — no setup-docker action required.
+      - name: Run full local database verification
+        run: bun run verify:db
