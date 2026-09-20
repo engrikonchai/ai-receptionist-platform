@@ -16,7 +16,17 @@ import { describe, expect, it } from 'vitest';
  * unconstrained but is actually unique (leads_reference_key); and the
  * updated_at trigger mechanism, while correctly inferred to exist, used
  * invented per-table names instead of the one verified shared name
- * `set_updated_at`. These tests assert the corrected, verified shape.
+ * `set_updated_at`.
+ *
+ * Revision 3: a further pg_catalog comparison found three remaining
+ * exactness gaps — businesses_public_widget_id_key/businesses_slug_key/
+ * leads_reference_key/widget_settings_business_id_key are real named
+ * pg_constraint UNIQUE objects in production, not bare unique indexes;
+ * leads' date/guest CHECK constraints used an invented name and a
+ * non-strict `>=` instead of the verified `leads_dates_check` with
+ * strict `check_out > check_in`; and several CHECK constraint names and
+ * every plain performance index were invented rather than matching the
+ * verified live set. These tests assert the corrected, verified shape.
  */
 const MIGRATIONS_DIR = import.meta.dirname;
 const FILENAME = '20260910090000_self_contained_database_baseline.sql';
@@ -139,60 +149,87 @@ describe('self-contained database baseline migration — verified foreign keys',
   });
 });
 
-describe('self-contained database baseline migration — verified uniqueness', () => {
-  it('creates businesses_public_widget_id_key, preceded by a duplicate pre-check', () => {
-    const idx = sql.indexOf('create unique index if not exists businesses_public_widget_id_key');
-    expect(idx).toBeGreaterThan(0);
-    const preCheck = sql.slice(Math.max(0, idx - 700), idx);
-    expect(preCheck).toMatch(/group by public_widget_id/);
-    expect(preCheck).toMatch(/having count\(\*\) > 1/);
-    expect(preCheck).toMatch(/raise exception/);
-  });
+// The four VERIFIED live named UNIQUE constraints this baseline owns —
+// real pg_constraint UNIQUE objects in production, not bare unique
+// indexes (REVISION 3).
+const NAMED_UNIQUE_CONSTRAINTS: Array<{ name: string; table: string; column: string }> = [
+  { name: 'businesses_public_widget_id_key', table: 'businesses', column: 'public_widget_id' },
+  { name: 'businesses_slug_key', table: 'businesses', column: 'slug' },
+  { name: 'leads_reference_key', table: 'leads', column: 'reference' },
+  { name: 'widget_settings_business_id_key', table: 'widget_settings', column: 'business_id' }
+];
 
-  it('creates businesses_slug_key, preceded by a duplicate pre-check', () => {
-    const idx = sql.indexOf('create unique index if not exists businesses_slug_key');
-    expect(idx).toBeGreaterThan(0);
-    const preCheck = sql.slice(Math.max(0, idx - 700), idx);
-    expect(preCheck).toMatch(/group by slug/);
-    expect(preCheck).toMatch(/having count\(\*\) > 1/);
-    expect(preCheck).toMatch(/raise exception/);
-  });
+describe('self-contained database baseline migration — verified uniqueness: real named UNIQUE constraints, not bare indexes', () => {
+  for (const { name, table, column } of NAMED_UNIQUE_CONSTRAINTS) {
+    it(`${name} is declared inline as a named UNIQUE table constraint on public.${table}(${column}), never a bare CREATE UNIQUE INDEX`, () => {
+      // A "constraint <name> unique (<column>)" clause both registers a
+      // pg_constraint UNIQUE row AND auto-creates a same-named backing
+      // index — a bare `create unique index <name> on ...` only ever
+      // produces the index, never the pg_constraint row. Assert the
+      // former is present for a blank-database create, and the latter
+      // form is never used for this object anywhere in the file.
+      const inlineRe = new RegExp(`constraint ${name} unique \\(${column}\\)`);
+      expect(sql).toMatch(inlineRe);
+      expect(executableSql).not.toMatch(new RegExp(`create unique index if not exists ${name}\\b`));
+    });
 
-  it('creates widget_settings_business_id_key, preceded by a duplicate pre-check', () => {
-    const idx = sql.indexOf('create unique index if not exists widget_settings_business_id_key');
-    expect(idx).toBeGreaterThan(0);
-    const preCheck = sql.slice(Math.max(0, idx - 700), idx);
-    expect(preCheck).toMatch(/group by business_id/);
-    expect(preCheck).toMatch(/having count\(\*\) > 1/);
-    expect(preCheck).toMatch(/raise exception/);
-  });
-
-  it('creates leads_reference_key (VERIFIED live — corrected from the first revision), preceded by a duplicate pre-check', () => {
-    const idx = sql.indexOf('create unique index if not exists leads_reference_key');
-    expect(idx).toBeGreaterThan(0);
-    const preCheck = sql.slice(Math.max(0, idx - 700), idx);
-    expect(preCheck).toMatch(/group by reference/);
-    expect(preCheck).toMatch(/having count\(\*\) > 1/);
-    expect(preCheck).toMatch(/raise exception/);
-    expect(sql).toMatch(
-      /create unique index if not exists leads_reference_key\s*\n\s*on public\.leads \(reference\);/
-    );
-  });
+    it(`${name} has a duplicate preflight and a fallback ALTER TABLE ADD CONSTRAINT for a pre-existing table missing it`, () => {
+      const idx = sql.indexOf(`add constraint ${name} unique (${column});`);
+      expect(idx).toBeGreaterThan(0);
+      const preceding = sql.slice(Math.max(0, idx - 1400), idx);
+      expect(preceding).toMatch(/group by/);
+      expect(preceding).toMatch(/having count\(\*\) > 1/);
+      expect(preceding).toMatch(/raise exception/);
+      expect(preceding).toMatch(
+        new RegExp(`constraint_name = '${name}' and constraint_type = 'UNIQUE'`)
+      );
+    });
+  }
 
   it('never describes leads.reference as unconstrained or lacking a uniqueness requirement', () => {
     expect(sql).not.toMatch(/reference[\s\S]{0,80}no known uniqueness requirement/i);
     expect(sql).not.toMatch(/reference[\s\S]{0,80}not a security token/i);
   });
 
-  it('is compatible with businesses_owner_id_key by never creating it itself (owned by 20260921090000_single_business_per_owner.sql)', () => {
+  it('businesses_owner_id_key remains the intentionally PARTIAL unique index, never converted into a full table constraint or otherwise created here (owned entirely by 20260921090000_single_business_per_owner.sql)', () => {
     expect(executableSql).not.toMatch(/businesses_owner_id_key/);
     expect(executableSql).not.toMatch(/create unique index[^;]*\(owner_id\)/i);
+    expect(executableSql).not.toMatch(/constraint businesses_owner_id_key/i);
   });
 });
 
-describe('self-contained database baseline migration — verified check constraints', () => {
-  it('businesses.supported_languages must be non-empty', () => {
-    expect(sql).toMatch(/check \(cardinality\(supported_languages\) > 0\)/);
+// Every CHECK constraint this baseline owns, under its exact VERIFIED
+// live name (REVISION 3). messages_sender_type_check is deliberately
+// excluded — it stays owned entirely by
+// 20260915170200_inbox_human_replies.sql, the migration that introduces
+// the sender_type column itself.
+const VERIFIED_CHECK_CONSTRAINT_NAMES = [
+  'businesses_supported_languages_not_empty',
+  'conversations_channel_check',
+  'conversations_status_check',
+  'messages_content_length_check',
+  'messages_role_check',
+  'leads_dates_check',
+  'leads_guest_count_check',
+  'leads_source_check',
+  'leads_status_check',
+  'handoffs_status_check',
+  'widget_settings_position_check'
+];
+
+describe('self-contained database baseline migration — verified check constraints, under their exact verified names', () => {
+  for (const name of VERIFIED_CHECK_CONSTRAINT_NAMES) {
+    it(`declares a constraint named exactly \`${name}\``, () => {
+      const re = new RegExp(`constraint ${name}\\b`);
+      expect(sql).toMatch(re);
+    });
+  }
+
+  it('businesses.supported_languages must be non-empty (businesses_supported_languages_not_empty — no "_check" suffix, matching the verified live name exactly)', () => {
+    expect(sql).toMatch(
+      /constraint businesses_supported_languages_not_empty\s*\n\s*check \(cardinality\(supported_languages\) > 0\)/
+    );
+    expect(executableSql).not.toMatch(/businesses_supported_languages_not_empty_check/);
   });
 
   it('conversations.channel and .status are constrained to their known values', () => {
@@ -215,12 +252,18 @@ describe('self-contained database baseline migration — verified check constrai
     expect(sql).toMatch(/check \(status in \('new', 'contacted', 'confirmed', 'lost'\)\)/);
   });
 
-  it('leads.check_out must be on/after check_in when both are present', () => {
-    expect(sql).toMatch(/check \(check_out is null or check_in is null or check_out >= check_in\)/);
+  it('leads_dates_check uses a STRICT check_out > check_in (VERIFIED live, corrected in REVISION 3 from a non-strict >= under an invented name)', () => {
+    expect(sql).toMatch(
+      /constraint leads_dates_check\s*\n\s*check \(\s*\n\s*check_in is null\s*\n\s*or check_out is null\s*\n\s*or check_out > check_in\s*\n\s*\)/
+    );
+    expect(executableSql).not.toMatch(/check_out >= check_in/);
+    expect(executableSql).not.toMatch(/leads_check_out_after_check_in_check/);
   });
 
-  it('leads.guest_count is constrained to 1 through 4', () => {
-    expect(sql).toMatch(/check \(guest_count is null or guest_count between 1 and 4\)/);
+  it('leads_guest_count_check matches the exact verified live text', () => {
+    expect(sql).toMatch(
+      /constraint leads_guest_count_check\s*\n\s*check \(\s*\n\s*guest_count is null\s*\n\s*or \(guest_count >= 1 and guest_count <= 4\)\s*\n\s*\)/
+    );
   });
 
   it('handoffs.status is constrained to its known values', () => {
@@ -229,6 +272,90 @@ describe('self-contained database baseline migration — verified check constrai
 
   it('widget_settings.position is constrained to its known values', () => {
     expect(sql).toMatch(/check \("position" in \('bottom-right', 'bottom-left'\)\)/);
+  });
+});
+
+// The exact VERIFIED live plain performance indexes this baseline owns
+// (REVISION 3) — no later migration creates any of these, so this
+// baseline is where they belong. businesses_public_widget_id_idx (a
+// redundant historical duplicate of businesses_public_widget_id_key) and
+// the later-column indexes handoffs_client_request_id_key/
+// messages_client_message_id_key are deliberately excluded — see this
+// migration's own FINAL SCHEMA DIFFERENCES / SCOPE sections.
+const VERIFIED_PERFORMANCE_INDEXES: Array<{ name: string; table: string; columns: string }> = [
+  { name: 'businesses_owner_id_idx', table: 'businesses', columns: '(owner_id)' },
+  {
+    name: 'conversations_business_created_idx',
+    table: 'conversations',
+    columns: '(business_id, created_at desc)'
+  },
+  { name: 'conversations_business_id_idx', table: 'conversations', columns: '(business_id)' },
+  { name: 'conversations_visitor_id_idx', table: 'conversations', columns: '(visitor_id)' },
+  {
+    name: 'handoffs_business_created_idx',
+    table: 'handoffs',
+    columns: '(business_id, created_at desc)'
+  },
+  { name: 'handoffs_business_id_idx', table: 'handoffs', columns: '(business_id)' },
+  { name: 'knowledge_items_business_id_idx', table: 'knowledge_items', columns: '(business_id)' },
+  {
+    name: 'knowledge_items_business_sort_idx',
+    table: 'knowledge_items',
+    columns: '(business_id, sort_order)'
+  },
+  { name: 'leads_business_created_idx', table: 'leads', columns: '(business_id, created_at desc)' },
+  { name: 'leads_business_id_idx', table: 'leads', columns: '(business_id)' },
+  { name: 'leads_status_idx', table: 'leads', columns: '(status)' },
+  {
+    name: 'messages_conversation_created_idx',
+    table: 'messages',
+    columns: '(conversation_id, created_at)'
+  },
+  { name: 'messages_conversation_id_idx', table: 'messages', columns: '(conversation_id)' }
+];
+
+describe('self-contained database baseline migration — verified performance index reconciliation', () => {
+  for (const { name, table, columns } of VERIFIED_PERFORMANCE_INDEXES) {
+    it(`creates ${name} on public.${table}${columns}, guarded by if not exists`, () => {
+      const escapedColumns = columns.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = new RegExp(
+        `create index if not exists ${name}\\s*\\n\\s*on public\\.${table} ${escapedColumns};`
+      );
+      expect(sql).toMatch(re);
+    });
+  }
+
+  it('creates exactly 13 plain performance indexes — no invented indexes beyond the verified live set', () => {
+    const allPlainIndexes = executableSql.match(/create index if not exists \w+/g) ?? [];
+    expect(allPlainIndexes.length).toBe(VERIFIED_PERFORMANCE_INDEXES.length);
+    const names = allPlainIndexes.map((s) => s.replace('create index if not exists ', ''));
+    expect(new Set(names)).toEqual(new Set(VERIFIED_PERFORMANCE_INDEXES.map((i) => i.name)));
+  });
+
+  it('never recreates the invented, differently-shaped indexes from earlier revisions', () => {
+    const invented = [
+      'knowledge_items_business_id_sort_order_created_at_idx',
+      'conversations_business_id_updated_at_idx',
+      'leads_business_id_created_at_idx',
+      'leads_conversation_id_created_at_idx',
+      'handoffs_business_id_created_at_idx',
+      'handoffs_conversation_id_created_at_idx',
+      'messages_conversation_id_created_at_idx'
+    ];
+    for (const name of invented) {
+      expect(executableSql).not.toMatch(new RegExp(`\\b${name}\\b`));
+    }
+  });
+
+  it('never reproduces the redundant businesses_public_widget_id_idx — documented as an intentional final-schema difference', () => {
+    expect(executableSql).not.toMatch(/businesses_public_widget_id_idx/);
+    expect(sql).toMatch(/FINAL SCHEMA DIFFERENCES/);
+    expect(sql).toMatch(/businesses_public_widget_id_idx/);
+  });
+
+  it('never duplicates the later-column indexes handoffs_client_request_id_key or messages_client_message_id_key', () => {
+    expect(executableSql).not.toMatch(/handoffs_client_request_id_key/);
+    expect(executableSql).not.toMatch(/messages_client_message_id_key/);
   });
 });
 

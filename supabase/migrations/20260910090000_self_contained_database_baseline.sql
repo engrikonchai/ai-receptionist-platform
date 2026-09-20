@@ -31,6 +31,46 @@
 --      database-wide) and a SECURITY INVOKER function whose exact body
 --      is reproduced verbatim below. Fixed below.
 --
+-- REVISION 3 — a further read-only pg_catalog comparison against
+-- production found three remaining exactness gaps in revision 2, all
+-- fixed here:
+--   1. businesses_public_widget_id_key, businesses_slug_key,
+--      leads_reference_key, and widget_settings_business_id_key are
+--      real named pg_constraint UNIQUE objects in production, not bare
+--      CREATE UNIQUE INDEX statements (which produce an index but no
+--      table_constraints row). Each is now declared inline as
+--      `constraint <name> unique (<column>)` in its CREATE TABLE, which
+--      both registers the named UNIQUE constraint AND auto-creates its
+--      identically-named backing index — matching a blank database
+--      exactly — with a fallback `alter table ... add constraint`
+--      (guarded by the same duplicate preflight as before) for the
+--      pre-existing-table case a plain `create table if not exists`
+--      can't retrofit. businesses_owner_id_key is deliberately left
+--      alone: it is, and remains, the intentionally PARTIAL unique
+--      index owned entirely by
+--      20260921090000_single_business_per_owner.sql, never a full
+--      table constraint.
+--   2. leads' date/guest CHECK constraints used invented names and a
+--      non-strict `>=` date comparison. The verified live constraint is
+--      named `leads_dates_check` and uses strict `check_out > check_in`
+--      — fixed below, along with matching the verified literal text of
+--      `leads_guest_count_check`.
+--   3. Several CHECK constraint names and every plain performance index
+--      were either invented or missing. Every CHECK constraint this
+--      baseline owns now uses its verified live name exactly (see each
+--      table's own section below), and the verified live performance
+--      indexes (businesses_owner_id_idx and one or more per
+--      conversations/knowledge_items/leads/handoffs/messages) are now
+--      created here since no later migration owns them — replacing this
+--      migration's own previously invented, differently-shaped indexes.
+--      businesses_public_widget_id_idx (a redundant historical unique
+--      index also present live, duplicating businesses_public_widget_id_key)
+--      is deliberately NOT reproduced: no later migration owns it
+--      either, and adding a second, functionally redundant unique index
+--      under a different name would only be historical-parity theater
+--      with no correctness or performance benefit — see FINAL SCHEMA
+--      DIFFERENCES below.
+--
 -- MIGRATION-ORDER WARNING — read before ever running Supabase CLI
 -- migration commands against production after this file exists in this
 -- directory's history:
@@ -94,15 +134,31 @@
 --   actual production Supabase schema, not inferred):
 --     - businesses.owner_id -> public.profiles(id) on delete cascade
 --     - profiles.id -> auth.users(id) on delete cascade
---     - businesses.slug is unique; businesses.public_widget_id is unique
---     - widget_settings.business_id is unique; leads.reference is unique
---       (leads_reference_key)
+--     - businesses.slug is unique (businesses_slug_key);
+--       businesses.public_widget_id is unique
+--       (businesses_public_widget_id_key); widget_settings.business_id
+--       is unique (widget_settings_business_id_key); leads.reference is
+--       unique (leads_reference_key) — all four are real named
+--       pg_constraint UNIQUE objects, not bare unique indexes (see
+--       REVISION 3 above)
 --     - every FK delete rule listed in the per-table sections below
---     - every CHECK constraint listed in the per-table sections below
---       (channel/status/role/sender_type/source/position vocabularies,
---       businesses.supported_languages non-empty, messages.content
---       length 1-4000, leads.check_out >= leads.check_in,
---       leads.guest_count 1-4)
+--     - every CHECK constraint listed in the per-table sections below,
+--       under its exact verified name (channel/status/role/source/
+--       position vocabularies, businesses.supported_languages non-empty,
+--       messages.content length 1-4000, leads.check_out strictly after
+--       leads.check_in, leads.guest_count 1-4) — sender_type's own CHECK
+--       is also verified live but owned entirely by
+--       20260915170200_inbox_human_replies.sql, not duplicated here
+--     - the verified live performance index set this baseline owns
+--       (businesses_owner_id_idx; conversations_business_created_idx,
+--       conversations_business_id_idx, conversations_visitor_id_idx;
+--       knowledge_items_business_id_idx,
+--       knowledge_items_business_sort_idx; leads_business_created_idx,
+--       leads_business_id_idx, leads_status_idx;
+--       handoffs_business_created_idx, handoffs_business_id_idx;
+--       messages_conversation_created_idx, messages_conversation_id_idx)
+--       — see REVISION 3 above and FINAL SCHEMA DIFFERENCES below for
+--       the one verified live index deliberately not reproduced
 --     - public.set_updated_at()'s exact signature and body (language
 --       plpgsql, SECURITY INVOKER, no search_path override), reproduced
 --       verbatim below, owned by postgres, executable by PUBLIC (which
@@ -115,24 +171,29 @@
 --     - RLS is enabled on all eight tables with owner-scoped policies
 --       already installed
 --
---   STILL INFERRED (this migration's own reasonable choice, not
---   independently confirmed against the live schema, and called out as
---   such rather than silently presented as verified):
---     - Every plain performance index this migration adds beyond the
---       four verified unique ones (e.g.
---       knowledge_items_business_id_sort_order_created_at_idx,
---       conversations_business_id_updated_at_idx,
---       leads_business_id_created_at_idx and
---       leads_conversation_id_created_at_idx,
---       handoffs_business_id_created_at_idx and
---       handoffs_conversation_id_created_at_idx,
---       messages_conversation_id_created_at_idx) — inferred from this
---       repository's own `.order()`/`.eq()` query patterns (see each
---       table's own comment below), not confirmed to exist under these
---       exact names in production. Harmless either way: an index is a
---       pure performance aid, never a correctness or security concern,
---       and `create index if not exists` no-ops if an equivalent
---       already exists under a different name.
+--   STILL INFERRED: none remaining as of REVISION 3 — the plain
+--   performance indexes this migration's earlier revisions invented
+--   (differently named and differently shaped from what production
+--   actually has) have been replaced with the verified live index set
+--   listed above. This category is kept in this migration's own header
+--   as a template for any future correction, not because anything below
+--   is currently unverified.
+--
+--   FINAL SCHEMA DIFFERENCES — the one place this migration's blank-
+--   database result deliberately still differs from live production,
+--   after every correction above:
+--     - businesses_public_widget_id_idx: live production carries this
+--       as a second, redundant unique index on businesses.public_widget_id
+--       (a historical duplicate of businesses_public_widget_id_key,
+--       which already enforces the same uniqueness). No later migration
+--       in this repository owns or expects it. This migration does not
+--       recreate it — a second unique index enforcing the exact same
+--       constraint as an existing one adds no correctness or query-
+--       planning benefit, only upkeep cost, and reproducing dead
+--       historical duplication "for parity" is not what SCOPE above
+--       asks this migration to do. A blank database built from this
+--       migration therefore has one unique index on public_widget_id
+--       (businesses_public_widget_id_key) where production has two.
 --
 --   CANNOT BE RUNTIME-TESTED FROM THIS ENVIRONMENT: this migration's own
 --   static SQL contract (its matching .test.ts) is the only verification
@@ -330,8 +391,10 @@ create table if not exists public.businesses (
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint businesses_supported_languages_not_empty_check
-    check (cardinality(supported_languages) > 0)
+  constraint businesses_supported_languages_not_empty
+    check (cardinality(supported_languages) > 0),
+  constraint businesses_public_widget_id_key unique (public_widget_id),
+  constraint businesses_slug_key unique (slug)
 );
 
 do $$
@@ -363,7 +426,7 @@ begin
   end if;
 end $$;
 
--- Pre-check before each unique index below, same pattern as
+-- Pre-check before each named UNIQUE constraint below, same pattern as
 -- 20260921090000_single_business_per_owner.sql's own owner_id check:
 -- raise a clear diagnostic naming only the count/value, never any other
 -- row data, rather than a bare unique-violation error or a silent skip.
@@ -378,13 +441,28 @@ begin
   ) dupes;
   if v_dup_count > 0 then
     raise exception
-      'public.businesses has % public_widget_id value(s) shared by more than one row — a unique public_widget_id index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
+      'public.businesses has % public_widget_id value(s) shared by more than one row — the businesses_public_widget_id_key unique constraint cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
       v_dup_count;
   end if;
 end $$;
 
-create unique index if not exists businesses_public_widget_id_key
-  on public.businesses (public_widget_id);
+-- A freshly created table already has businesses_public_widget_id_key
+-- from the inline `constraint ... unique (...)` clause above (which
+-- also auto-creates its identically-named backing index). This only
+-- fires against a pre-existing table that predates this migration and
+-- doesn't already carry the verified live constraint by this exact
+-- name.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'businesses'
+      and constraint_name = 'businesses_public_widget_id_key' and constraint_type = 'UNIQUE'
+  ) then
+    alter table public.businesses
+      add constraint businesses_public_widget_id_key unique (public_widget_id);
+  end if;
+end $$;
 
 do $$
 declare
@@ -397,13 +475,31 @@ begin
   ) dupes;
   if v_dup_count > 0 then
     raise exception
-      'public.businesses has % slug value(s) shared by more than one row — a unique slug index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
+      'public.businesses has % slug value(s) shared by more than one row — the businesses_slug_key unique constraint cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
       v_dup_count;
   end if;
 end $$;
 
-create unique index if not exists businesses_slug_key
-  on public.businesses (slug);
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'businesses'
+      and constraint_name = 'businesses_slug_key' and constraint_type = 'UNIQUE'
+  ) then
+    alter table public.businesses
+      add constraint businesses_slug_key unique (slug);
+  end if;
+end $$;
+
+-- businesses_owner_id_idx: a plain, non-unique performance index —
+-- VERIFIED live, distinct from businesses_owner_id_key (the partial
+-- UNIQUE index owned entirely by
+-- 20260921090000_single_business_per_owner.sql — never recreated or
+-- converted here; see REVISION 3 above). No later migration owns this
+-- plain index, so it belongs here.
+create index if not exists businesses_owner_id_idx
+  on public.businesses (owner_id);
 
 alter table public.businesses enable row level security;
 
@@ -423,10 +519,8 @@ comment on table public.businesses is
 --    business_id, category, question, answer_en, answer_me, answer_ru,
 --    is_active, sort_order — every one of those explicitly, every time)
 --    and its list query's `.eq('business_id', ...).order('sort_order',
---    { ascending: true }).order('created_at', { ascending: true })` —
---    the index below is this migration's own inference from that query
---    pattern, not independently verified against the live database (see
---    "STILL INFERRED" in this migration's own header comment).
+--    { ascending: true }).order('created_at', { ascending: true })`.
+--    Both indexes below are VERIFIED live (REVISION 3).
 -- =====================================================================
 create table if not exists public.knowledge_items (
   id uuid primary key default gen_random_uuid(),
@@ -470,8 +564,11 @@ begin
   end if;
 end $$;
 
-create index if not exists knowledge_items_business_id_sort_order_created_at_idx
-  on public.knowledge_items (business_id, sort_order, created_at);
+create index if not exists knowledge_items_business_id_idx
+  on public.knowledge_items (business_id);
+
+create index if not exists knowledge_items_business_sort_idx
+  on public.knowledge_items (business_id, sort_order);
 
 alter table public.knowledge_items enable row level security;
 
@@ -490,7 +587,9 @@ comment on table public.knowledge_items is
 --    and by src/lib/public-widget/runtime.ts's own INSERT (supplies
 --    business_id, visitor_id, channel, detected_language, status,
 --    human_takeover, lead_created, flow_state). channel and status
---    CHECK vocabularies are VERIFIED live.
+--    CHECK vocabularies, under their verified names
+--    conversations_channel_check/conversations_status_check, and all
+--    three indexes below, are VERIFIED live (REVISION 3).
 -- =====================================================================
 create table if not exists public.conversations (
   id uuid primary key default gen_random_uuid(),
@@ -537,8 +636,14 @@ begin
   end if;
 end $$;
 
-create index if not exists conversations_business_id_updated_at_idx
-  on public.conversations (business_id, updated_at desc);
+create index if not exists conversations_business_created_idx
+  on public.conversations (business_id, created_at desc);
+
+create index if not exists conversations_business_id_idx
+  on public.conversations (business_id);
+
+create index if not exists conversations_visitor_id_idx
+  on public.conversations (visitor_id);
 
 alter table public.conversations enable row level security;
 
@@ -601,8 +706,11 @@ begin
   end if;
 end $$;
 
-create index if not exists messages_conversation_id_created_at_idx
+create index if not exists messages_conversation_created_idx
   on public.messages (conversation_id, created_at);
+
+create index if not exists messages_conversation_id_idx
+  on public.messages (conversation_id);
 
 alter table public.messages enable row level security;
 
@@ -616,11 +724,14 @@ comment on table public.messages is
 --    src/lib/public-widget/runtime.ts's own INSERT. check_in/check_out
 --    are date-only (never time-of-day) per
 --    src/features/leads/api/service.test.ts's own fixture values
---    ('2026-08-14'). reference IS unique (leads_reference_key) —
---    VERIFIED live; this migration's first revision incorrectly
---    documented it as unconstrained (see REVISION 2 above). source/
---    status vocabularies, check_out >= check_in, and guest_count
---    1-4 are all VERIFIED live CHECK constraints.
+--    ('2026-08-14'). reference IS unique (leads_reference_key, a real
+--    named UNIQUE constraint — REVISION 3) — VERIFIED live; this
+--    migration's first revision incorrectly documented it as
+--    unconstrained (see REVISION 2 above). source_check/status_check/
+--    dates_check/guest_count_check are all VERIFIED live CHECK
+--    constraints under their exact verified names; leads_dates_check
+--    uses a strict `check_out > check_in` (REVISION 3 — the second
+--    revision incorrectly used `>=` under an invented name).
 -- =====================================================================
 create table if not exists public.leads (
   id uuid primary key default gen_random_uuid(),
@@ -641,10 +752,18 @@ create table if not exists public.leads (
   updated_at timestamptz not null default now(),
   constraint leads_source_check check (source in ('website', 'instagram', 'whatsapp')),
   constraint leads_status_check check (status in ('new', 'contacted', 'confirmed', 'lost')),
-  constraint leads_check_out_after_check_in_check
-    check (check_out is null or check_in is null or check_out >= check_in),
+  constraint leads_dates_check
+    check (
+      check_in is null
+      or check_out is null
+      or check_out > check_in
+    ),
   constraint leads_guest_count_check
-    check (guest_count is null or guest_count between 1 and 4)
+    check (
+      guest_count is null
+      or (guest_count >= 1 and guest_count <= 4)
+    ),
+  constraint leads_reference_key unique (reference)
 );
 
 do $$
@@ -689,19 +808,36 @@ begin
   ) dupes;
   if v_dup_count > 0 then
     raise exception
-      'public.leads has % reference value(s) shared by more than one row — a unique reference index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
+      'public.leads has % reference value(s) shared by more than one row — the leads_reference_key unique constraint cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
       v_dup_count;
   end if;
 end $$;
 
-create unique index if not exists leads_reference_key
-  on public.leads (reference);
+-- A freshly created table already has leads_reference_key from the
+-- inline `constraint ... unique (...)` clause above (which also
+-- auto-creates its identically-named backing index). This only fires
+-- against a pre-existing table lacking the verified live constraint by
+-- this exact name.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'leads'
+      and constraint_name = 'leads_reference_key' and constraint_type = 'UNIQUE'
+  ) then
+    alter table public.leads
+      add constraint leads_reference_key unique (reference);
+  end if;
+end $$;
 
-create index if not exists leads_business_id_created_at_idx
+create index if not exists leads_business_created_idx
   on public.leads (business_id, created_at desc);
 
-create index if not exists leads_conversation_id_created_at_idx
-  on public.leads (conversation_id, created_at desc);
+create index if not exists leads_business_id_idx
+  on public.leads (business_id);
+
+create index if not exists leads_status_idx
+  on public.leads (status);
 
 alter table public.leads enable row level security;
 
@@ -720,8 +856,8 @@ comment on table public.leads is
 --    confirmed by database.types.ts (HandoffRow, minus
 --    client_request_id, which 20260918090000_handoff_idempotency.sql's
 --    own header comment documents as its own additive column) and by
---    src/lib/public-widget/runtime.ts's own INSERT. status vocabulary
---    is VERIFIED live.
+--    src/lib/public-widget/runtime.ts's own INSERT. handoffs_status_check
+--    and both indexes below are VERIFIED live (REVISION 3).
 -- =====================================================================
 create table if not exists public.handoffs (
   id uuid primary key default gen_random_uuid(),
@@ -765,11 +901,11 @@ begin
   end if;
 end $$;
 
-create index if not exists handoffs_business_id_created_at_idx
+create index if not exists handoffs_business_created_idx
   on public.handoffs (business_id, created_at desc);
 
-create index if not exists handoffs_conversation_id_created_at_idx
-  on public.handoffs (conversation_id, created_at desc);
+create index if not exists handoffs_business_id_idx
+  on public.handoffs (business_id);
 
 alter table public.handoffs enable row level security;
 
@@ -788,7 +924,9 @@ comment on table public.handoffs is
 --    database.types.ts (WidgetSettingsRow, minus widget_enabled/
 --    allowed_origins/installation_confirmed(_at), each documented as
 --    additive by its own later migration — see SCOPE above).
---    business_id is unique and position's vocabulary is VERIFIED live.
+--    business_id is unique (widget_settings_business_id_key, a real
+--    named UNIQUE constraint — REVISION 3) and widget_settings_position_check's
+--    vocabulary is VERIFIED live.
 -- =====================================================================
 create table if not exists public.widget_settings (
   id uuid primary key default gen_random_uuid(),
@@ -803,7 +941,8 @@ create table if not exists public.widget_settings (
   human_handoff_enabled boolean not null default false,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  constraint widget_settings_position_check check ("position" in ('bottom-right', 'bottom-left'))
+  constraint widget_settings_position_check check ("position" in ('bottom-right', 'bottom-left')),
+  constraint widget_settings_business_id_key unique (business_id)
 );
 
 do $$
@@ -846,13 +985,27 @@ begin
   ) dupes;
   if v_dup_count > 0 then
     raise exception
-      'public.widget_settings has % business_id value(s) shared by more than one row — a unique business_id index cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
+      'public.widget_settings has % business_id value(s) shared by more than one row — the widget_settings_business_id_key unique constraint cannot be safely applied while duplicates exist. Resolve in a verified follow-up migration before rerunning supabase/migrations/20260910090000_self_contained_database_baseline.sql.',
       v_dup_count;
   end if;
 end $$;
 
-create unique index if not exists widget_settings_business_id_key
-  on public.widget_settings (business_id);
+-- A freshly created table already has widget_settings_business_id_key
+-- from the inline `constraint ... unique (...)` clause above (which
+-- also auto-creates its identically-named backing index). This only
+-- fires against a pre-existing table lacking the verified live
+-- constraint by this exact name.
+do $$
+begin
+  if not exists (
+    select 1 from information_schema.table_constraints
+    where table_schema = 'public' and table_name = 'widget_settings'
+      and constraint_name = 'widget_settings_business_id_key' and constraint_type = 'UNIQUE'
+  ) then
+    alter table public.widget_settings
+      add constraint widget_settings_business_id_key unique (business_id);
+  end if;
+end $$;
 
 alter table public.widget_settings enable row level security;
 
