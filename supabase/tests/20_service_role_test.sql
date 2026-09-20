@@ -182,17 +182,30 @@ select is(
   'rerunning the backfill insert for an already-provisioned business stays at exactly one row (rerun-safe)'
 );
 
--- provision_agent_settings() cannot be invoked directly as service_role
--- — confirmed against a real local Postgres instance. Since EXECUTE is
--- revoked from every role including service_role (see the
--- has_function_privilege assertion above), the grant check itself
--- blocks the call before Postgres would even reach its separate
--- "trigger functions can only be called as triggers" restriction:
--- SQLSTATE 42501, "permission denied for function
--- provision_agent_settings" — the owning role (sb_postgres, exempt from
--- its own grants) is the one identity that would actually reach the
--- trigger-function restriction (SQLSTATE 0A000) instead, but no
--- application code ever runs as that role.
+-- provision_agent_settings() cannot be invoked directly as service_role.
+-- EXECUTE is revoked from public, anon, authenticated, AND service_role
+-- (see the has_function_privilege assertion below, and the migration's
+-- own revoke statement) -- the grant check itself blocks the call
+-- before Postgres would even reach its separate "trigger functions can
+-- only be called as triggers" restriction: SQLSTATE 42501, "permission
+-- denied for function provision_agent_settings". The owning role
+-- (sb_postgres, exempt from its own grants) is the one identity that
+-- would actually reach the trigger-function restriction (SQLSTATE
+-- 0A000) instead, but no application code ever runs as that role.
+--
+-- This specific assertion is why service_role is now in the revoke
+-- list at all: the real Supabase CLI Docker stack's own database CI job
+-- (this branch's GitHub Actions run) found that, before this fix,
+-- service_role got 0A000 here instead of 42501 -- proof that
+-- service_role had a live, unrevoked EXECUTE grant reaching all the way
+-- through to Postgres's trigger-function check, not blocked by any
+-- privilege check first. Root cause: this Supabase project's own
+-- default privileges grant service_role, like anon/authenticated, a
+-- direct EXECUTE on every newly created function -- a default this
+-- suite's own from-scratch local Postgres approximation had not
+-- modeled for service_role (only for anon/authenticated, per
+-- 20260923090000_harden_rate_limit_rpc_grants.sql), so it passed
+-- locally with the old two-role revoke while still failing for real.
 select throws_ok(
   'select public.provision_agent_settings()',
   '42501',
@@ -294,14 +307,18 @@ select is(
   'service_role has EXECUTE on both rate-limit RPCs'
 );
 
--- provision_agent_settings(): PUBLIC/anon/authenticated explicitly
--- revoked (see 20260924090000_agent_settings_foundation.sql's own
--- GRANTS note — applying the exact `from public, anon, authenticated`
--- lesson from the rate-limit RPCs above from the start, not just
--- `from public`). Deliberately NOT asserted for service_role either:
--- like handle_new_user(), this is a trigger function the trigger
--- mechanism invokes regardless of any EXECUTE grant, so no role needs
--- (or has) one.
+-- provision_agent_settings(): PUBLIC/anon/authenticated/service_role
+-- all explicitly revoked (see 20260924090000_agent_settings_foundation.sql's
+-- own GRANTS note). This is a trigger function -- the trigger mechanism
+-- invokes it regardless of any EXECUTE grant, so no role needs one --
+-- but "no role needs one" is not the same as "no role has one": the
+-- real Supabase CLI Docker stack proved service_role gets a direct
+-- EXECUTE grant by default on every new function, exactly like
+-- anon/authenticated (see 20260923090000_harden_rate_limit_rpc_grants.sql
+-- for that original finding). This assertion is what actually catches
+-- that gap -- a revoke list that stopped at `public, anon, authenticated`
+-- would leave this has_function_privilege('service_role', ...) check
+-- reading true.
 select is(
   (
     select count(*)::int

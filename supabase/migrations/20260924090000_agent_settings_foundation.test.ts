@@ -201,15 +201,23 @@ describe('agent-settings foundation migration -- static contract', () => {
     expect(body).toMatch(/on conflict \(business_id\) do nothing/);
   });
 
-  it('revokes EXECUTE on the provisioning function from public, anon, AND authenticated explicitly', () => {
+  it('revokes EXECUTE on the provisioning function from public, anon, authenticated, AND service_role explicitly', () => {
+    // service_role is required here, not optional: the real Supabase CLI
+    // Docker stack's own default privileges grant service_role a direct
+    // EXECUTE on every new function too (a second, distinct gap from the
+    // anon/authenticated one 20260923090000_harden_rate_limit_rpc_grants.sql
+    // found) — a revoke that stopped at `from public, anon, authenticated`
+    // left service_role callable directly, contrary to this function's
+    // trigger-only design.
     expect(sql).toMatch(
-      /revoke all on function public\.provision_agent_settings\(\) from public, anon, authenticated;/
+      /revoke all on function public\.provision_agent_settings\(\) from public, anon, authenticated, service_role;/
     );
   });
 
-  it('never grants anything to anon or authenticated anywhere in this file', () => {
+  it('never grants anything to anon, authenticated, or service_role anywhere in this file', () => {
     expect(executableSql).not.toMatch(/grant[^;]*to[^;]*\banon\b/i);
     expect(executableSql).not.toMatch(/grant[^;]*to[^;]*\bauthenticated\b/i);
+    expect(executableSql).not.toMatch(/grant[^;]*to[^;]*\bservice_role\b/i);
   });
 
   it('never seeds demo/starter content -- the backfill inserts only business_id, relying on column defaults', () => {

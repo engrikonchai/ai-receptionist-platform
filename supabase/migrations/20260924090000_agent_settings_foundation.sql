@@ -56,17 +56,31 @@
 --
 -- The one function this migration DOES create
 -- (provision_agent_settings(), a trigger function) explicitly revokes
--- EXECUTE from public, anon, AND authenticated -- not merely from
--- public -- learning directly from this branch's own prior finding in
--- 20260923090000_harden_rate_limit_rpc_grants.sql: this Supabase
--- project's own default privileges grant EXECUTE on every new function
--- directly to anon/authenticated, a grant that `revoke ... from public`
--- alone never removes. A direct per-role revoke is required from the
--- start for every new function this repository ever creates, not only
--- for RPC-shaped ones -- applied here even though a trigger function is
--- already unreachable via direct RPC regardless of any EXECUTE grant
--- (Postgres refuses "trigger functions can only be called as triggers"),
--- purely so a future grant audit of this schema finds nothing to flag.
+-- EXECUTE from public, anon, authenticated, AND service_role -- not
+-- merely from public -- learning directly from this branch's own prior
+-- finding in 20260923090000_harden_rate_limit_rpc_grants.sql: this
+-- Supabase project's own default privileges grant EXECUTE on every new
+-- function directly to anon/authenticated, a grant that `revoke ...
+-- from public` alone never removes. A direct per-role revoke is
+-- required from the start for every new function this repository ever
+-- creates, not only for RPC-shaped ones.
+--
+-- service_role was added to this revoke list only after the real
+-- Supabase CLI Docker stack (this branch's own GitHub Actions database
+-- job) proved a second, distinct default-privilege gap this migration's
+-- own from-scratch local Postgres approximation had not modeled: that
+-- project's defaults ALSO grant service_role a direct EXECUTE on every
+-- new function, not only anon/authenticated. Before this fix, a direct
+-- `select public.provision_agent_settings();` as service_role got past
+-- the (missing) grant check and only then hit Postgres's own "trigger
+-- functions can only be called as triggers" restriction (SQLSTATE
+-- 0A000) -- not the intended 42501 permission-denied outcome, and
+-- has_function_privilege('service_role', ..., 'EXECUTE') incorrectly
+-- read true. The trigger-function restriction alone was never meant to
+-- be this function's only defense; the intended design has always been
+-- trigger-only execution enforced by an explicit, complete revoke, with
+-- Postgres's own restriction as a second, redundant backstop -- not the
+-- reverse.
 --
 -- Rerun-safe throughout: `create table if not exists`, `drop policy if
 -- exists` + `create policy`, `drop trigger if exists` + `create
@@ -249,11 +263,26 @@ end;
 $$;
 
 comment on function public.provision_agent_settings() is
-  'Provisions exactly one default public.agent_settings row whenever a public.businesses row is inserted -- existing businesses and new signups alike (this trigger fires for handle_new_user()''s own businesses insert too, since that insert runs through the same table). Idempotent and duplicate-safe via ON CONFLICT (business_id) against agent_settings_business_id_key. SECURITY DEFINER with search_path pinned to empty and every relation reference fully schema-qualified (public.agent_settings). Not callable as an exposed RPC -- EXECUTE is revoked from public, anon, and authenticated below; only the trigger mechanism invokes it, regardless of any EXECUTE grant. Never logs a business id or any user data.';
+  'Provisions exactly one default public.agent_settings row whenever a public.businesses row is inserted -- existing businesses and new signups alike (this trigger fires for handle_new_user()''s own businesses insert too, since that insert runs through the same table). Idempotent and duplicate-safe via ON CONFLICT (business_id) against agent_settings_business_id_key. SECURITY DEFINER with search_path pinned to empty and every relation reference fully schema-qualified (public.agent_settings). Not callable as an exposed RPC -- EXECUTE is revoked from public, anon, authenticated, AND service_role below; only the trigger mechanism invokes it, regardless of any EXECUTE grant. Never logs a business id or any user data.';
 
--- See this migration's own GRANTS section above for why `from public,
--- anon, authenticated` (not merely `from public`) is required.
-revoke all on function public.provision_agent_settings() from public, anon, authenticated;
+-- Revokes from service_role too, not just public/anon/authenticated --
+-- confirmed against the real Supabase CLI Docker stack (this branch's
+-- own GitHub Actions database job), not assumed: this Supabase
+-- project's own default privileges grant service_role, in addition to
+-- anon/authenticated, a DIRECT EXECUTE grant on every newly created
+-- function. The local from-scratch Postgres approximation used
+-- throughout this branch's earlier verification rounds did not
+-- reproduce that specific default (it only modeled the anon/
+-- authenticated default grant found by
+-- 20260923090000_harden_rate_limit_rpc_grants.sql), so this gap wasn't
+-- caught until the real CI job ran service_role through the same
+-- has_function_privilege() and direct-invocation checks. The intended
+-- design has always been trigger-only execution -- service_role never
+-- needed to call this function directly (the trigger mechanism invokes
+-- it regardless of any EXECUTE grant, exactly like
+-- handle_new_user() needs none either) -- so this closes the gap by
+-- revoking explicitly rather than by granting service_role anything.
+revoke all on function public.provision_agent_settings() from public, anon, authenticated, service_role;
 
 drop trigger if exists on_business_created on public.businesses;
 
