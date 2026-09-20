@@ -46,6 +46,14 @@ export const navGroups: NavGroup[] = [
         items: []
       },
       {
+        title: 'Agent',
+        url: '/dashboard/agent',
+        icon: 'aiAgent',
+        shortcut: ['a', 'g'],
+        isActive: false,
+        items: []
+      },
+      {
         title: 'Channels',
         url: '/dashboard/channels',
         icon: 'share',
