@@ -180,6 +180,26 @@ This builds the app and runs it on a fixed local port (see `playwright.config.ts
 
 The committed E2E suite (`e2e/`) is **intentionally secret-free**: it only covers flows that work without a real Supabase or Paddle project — the auth pages (`/login`, `/signup`, `/forgot-password`) loading and passing basic accessibility/responsive checks, `/dashboard/overview` redirecting safely to `/login` when signed out, and the static `/widget-loader.js` script serving correctly. It never signs in, signs up, or calls a real external API. Testing authenticated flows against a live Supabase/Paddle project is a separate, future E2E environment, not part of this suite.
 
+### Database verification (Supabase)
+
+Proves that a completely **blank** Supabase project — no ChatbotDemo repository, no manual setup — can apply this repository's entire migration chain (`supabase/migrations/`), provision a new owner on signup, and enforce Row Level Security. This runs against an **ephemeral local Supabase stack**, never the real production project, and needs **no production credentials at all**.
+
+**Requires Docker** (with Compose) running locally. The Supabase CLI itself is already a pinned dev dependency (`bunx supabase ...`, no global install).
+
+```bash
+bun run db:start    # start the local Supabase stack (Postgres + Auth + API only — see supabase/config.toml)
+bun run db:reset     # apply every migration to that local database, from zero
+bun run test:db      # run the pgTAP database tests (supabase/tests/*_test.sql)
+bun run test:db:provisioning   # signup/provisioning integration harness (supabase/tests-integration/provisioning.ts)
+bun run db:stop      # stop the local stack
+```
+
+`bun run verify:db` runs the full sequence CI uses (start → reset → pgTAP tests → provisioning harness → reset again → smoke tests → stop, stopping the stack even if a step fails) — see `scripts/verify-db.sh`.
+
+**⚠️ Never run `bun run db:reset` (or any `supabase db reset`/`db push`) against the production Supabase project.** Every command above is hard-scoped to the local stack (`--local`, or a CLI call that only ever targets `127.0.0.1`) and none of it accepts `NEXT_PUBLIC_SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` — the local stack's own throwaway local-only keys and URL are read directly from `supabase status` instead.
+
+`supabase/migrations/20260910090000_self_contained_database_baseline.sql` — the migration that makes a blank database possible at all — is already represented in production (its shape matches what production already had before this repository owned its own baseline). It exists to bootstrap a **fresh** environment; production doesn't need it re-applied, and a future Supabase CLI reconciliation against production may need that specific migration version marked as already applied rather than executed (see that file's own header comment).
+
 ---
 
 ## Cleanup Script: Start Minimal in 60 Seconds

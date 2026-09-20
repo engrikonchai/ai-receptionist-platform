@@ -1,0 +1,95 @@
+# Local-only Supabase CLI configuration for database verification
+# (fresh-database migration/RLS/provisioning testing — see
+# supabase/migrations/20260910090000_self_contained_database_baseline.sql
+# and this repo's `bun run db:*` / `bun run test:db` scripts). Every
+# value below is a local Docker Compose default the CLI itself
+# generates — never a production URL, project ref, database password,
+# Paddle secret, or customer data. `supabase start` prints its own
+# local-only anon/service_role keys and connection URL at startup; none
+# of those are secrets worth protecting (they're the same well-known
+# values on every machine that runs the local stack) and none of them
+# are used against the real, production Supabase project this app
+# otherwise points at via NEXT_PUBLIC_SUPABASE_URL/SUPABASE_SERVICE_ROLE_KEY.
+#
+# Deliberately minimal: only `db`, `api`, and `auth` are enabled — the
+# three services database verification actually needs (migrations run
+# against `db`; email/password signup needs `auth`, reachable through
+# `api`). realtime/storage/edge_runtime/analytics/studio/local_smtp are
+# all disabled — this app uses none of them, and starting them would
+# only slow down local/CI startup for no benefit. No seed data (no
+# demo/customer rows of any kind — `db.seed` is disabled and no
+# supabase/seed.sql file exists).
+#
+# For detailed configuration reference documentation, visit:
+# https://supabase.com/docs/guides/local-development/cli/config
+project_id = "ai-receptionist-platform"
+
+[api]
+enabled = true
+port = 54321
+# GraphQL is unused by this app — only `public` is exposed.
+schemas = ["public"]
+extra_search_path = ["public", "extensions"]
+max_rows = 1000
+
+[db]
+port = 54322
+shadow_port = 54320
+health_timeout = "2m"
+# Must match the production Supabase project's own Postgres major
+# version (`select version();` on production reports Postgres 17).
+major_version = 17
+
+[db.migrations]
+enabled = true
+
+# No demo/seed data of any kind. Test data is created by the database
+# tests themselves (supabase/tests/), never preloaded here.
+[db.seed]
+enabled = false
+
+[realtime]
+enabled = false
+
+[studio]
+enabled = false
+
+[local_smtp]
+enabled = false
+
+[storage]
+enabled = false
+
+[auth]
+enabled = true
+site_url = "http://127.0.0.1:3000"
+additional_redirect_urls = ["https://127.0.0.1:3000"]
+jwt_expiry = 3600
+enable_refresh_token_rotation = true
+refresh_token_reuse_interval = 10
+enable_signup = true
+enable_anonymous_sign_ins = false
+enable_manual_linking = false
+minimum_password_length = 6
+password_requirements = ""
+
+[auth.email]
+enable_signup = true
+double_confirm_changes = true
+# No SMTP server is configured (local_smtp is disabled above) — sign-up
+# never waits on a confirmation email, so signup/RLS testing needs no
+# email delivery, real or captured.
+enable_confirmations = false
+secure_password_change = false
+max_frequency = "1s"
+otp_length = 6
+otp_expiry = 3600
+
+[auth.sms]
+enable_signup = false
+
+[edge_runtime]
+enabled = false
+
+[analytics]
+enabled = false
