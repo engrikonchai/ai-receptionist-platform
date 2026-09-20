@@ -10,6 +10,9 @@ select * from no_plan();
 
 create temporary table fixtures (key text primary key, value uuid);
 grant select on fixtures to anon, authenticated, service_role;
+-- service_role also needs to record the second business id it creates
+-- further down this file (see "agent_settings provisioning" below).
+grant insert on fixtures to service_role;
 
 with new_user as (
   insert into auth.users (
@@ -33,6 +36,32 @@ select 'business_id', id from public.businesses where owner_id = (select value f
 select ok(
   (select value from fixtures where key = 'business_id') is not null,
   'the test owner was auto-provisioned a business to attach billing/rate-limit fixtures to'
+);
+
+-- ---------------------------------------------------------------------
+-- agent_settings provisioning: the businesses insert above (from the
+-- auth.users signup trigger) already exercised on_business_created —
+-- confirm exactly one agent_settings row exists for it, with the
+-- documented defaults, before any owner has ever saved anything.
+-- ---------------------------------------------------------------------
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'business_id')),
+  1,
+  'the auto-provisioned business has exactly one agent_settings row'
+);
+select is(
+  (select tone from public.agent_settings where business_id = (select value from fixtures where key = 'business_id')),
+  'professional',
+  'the auto-provisioned agent_settings row has the documented default tone'
+);
+select is(
+  (select response_length from public.agent_settings where business_id = (select value from fixtures where key = 'business_id')),
+  'balanced',
+  'the auto-provisioned agent_settings row has the documented default response_length'
+);
+select ok(
+  (select custom_instructions from public.agent_settings where business_id = (select value from fixtures where key = 'business_id')) is null,
+  'the auto-provisioned agent_settings row has no custom_instructions and no demo/starter content'
 );
 
 -- ---------------------------------------------------------------------
@@ -115,6 +144,113 @@ select lives_ok(
   'service_role can call public.cleanup_expired_widget_rate_limits()'
 );
 
+-- ---------------------------------------------------------------------
+-- agent_settings provisioning: a genuinely NEW, direct businesses insert
+-- (not the auth.users signup path already exercised above, and not
+-- attached to either test owner — owner_id is nullable, matching the
+-- placeholder/unowned business case) fires on_business_created and
+-- provisions exactly one agent_settings row — proving the trigger
+-- itself, independent of handle_new_user()'s own businesses insert.
+-- ---------------------------------------------------------------------
+with new_business as (
+  insert into public.businesses (owner_id, name, slug, business_type, default_language, supported_languages)
+  values (
+    null, 'Second Business For Provisioning Test', 'pgtap-second-business-' || gen_random_uuid()::text,
+    'hotel', 'en', array['en']
+  )
+  returning id
+)
+insert into fixtures (key, value) select 'second_business_id', id from new_business;
+
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'second_business_id')),
+  1,
+  'a brand-new business insert automatically provisions exactly one agent_settings row (on_business_created trigger, not just the one-time backfill)'
+);
+
+-- Rerun-safety: the migration's own backfill statement, re-run here for
+-- a business that already has an agent_settings row, is a safe no-op —
+-- still exactly one row, no error, no overwrite of the (default) values
+-- already there.
+insert into public.agent_settings (business_id)
+select id from public.businesses where id = (select value from fixtures where key = 'second_business_id')
+on conflict (business_id) do nothing;
+
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'second_business_id')),
+  1,
+  'rerunning the backfill insert for an already-provisioned business stays at exactly one row (rerun-safe)'
+);
+
+-- provision_agent_settings() cannot be invoked directly as service_role
+-- — confirmed against a real local Postgres instance. Since EXECUTE is
+-- revoked from every role including service_role (see the
+-- has_function_privilege assertion above), the grant check itself
+-- blocks the call before Postgres would even reach its separate
+-- "trigger functions can only be called as triggers" restriction:
+-- SQLSTATE 42501, "permission denied for function
+-- provision_agent_settings" — the owning role (sb_postgres, exempt from
+-- its own grants) is the one identity that would actually reach the
+-- trigger-function restriction (SQLSTATE 0A000) instead, but no
+-- application code ever runs as that role.
+select throws_ok(
+  'select public.provision_agent_settings()',
+  '42501',
+  null,
+  'provision_agent_settings() cannot be invoked directly as service_role — blocked by the revoked EXECUTE grant before Postgres''s own trigger-function restriction would even apply'
+);
+
+-- ---------------------------------------------------------------------
+-- CHECK constraints are enforced even for service_role (RLS is bypassed
+-- by BYPASSRLS, but CHECK constraints are not an RLS mechanism and apply
+-- to every role, including service_role and the migration-owning role
+-- itself) — the database-level defense-in-depth behind the application's
+-- own validation in src/features/agent-settings/schemas/agent-settings.ts.
+-- ---------------------------------------------------------------------
+select throws_ok(
+  format(
+    $sql$update public.agent_settings set tone = 'sarcastic' where business_id = %L$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  '23514',
+  null,
+  'an invalid tone value is rejected by agent_settings_tone_check'
+);
+select throws_ok(
+  format(
+    $sql$update public.agent_settings set response_length = 'verbose' where business_id = %L$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  '23514',
+  null,
+  'an invalid response_length value is rejected by agent_settings_response_length_check'
+);
+select throws_ok(
+  format(
+    $sql$update public.agent_settings set custom_instructions = '   ' where business_id = %L$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  '23514',
+  null,
+  'a whitespace-only custom_instructions value is rejected outright by agent_settings_custom_instructions_check — the application layer normalizes whitespace-only to NULL before ever reaching this constraint, and this proves the constraint itself does not silently accept it either'
+);
+select throws_ok(
+  format(
+    $sql$update public.agent_settings set custom_instructions = repeat('x', 4001) where business_id = %L$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  '23514',
+  null,
+  'a custom_instructions value over 4000 characters is rejected by agent_settings_custom_instructions_check'
+);
+select lives_ok(
+  format(
+    $sql$update public.agent_settings set custom_instructions = null where business_id = %L$sql$,
+    (select value from fixtures where key = 'business_id')
+  ),
+  'NULL custom_instructions is accepted'
+);
+
 reset role;
 
 -- ---------------------------------------------------------------------
@@ -156,6 +292,29 @@ select is(
   ),
   2,
   'service_role has EXECUTE on both rate-limit RPCs'
+);
+
+-- provision_agent_settings(): PUBLIC/anon/authenticated explicitly
+-- revoked (see 20260924090000_agent_settings_foundation.sql's own
+-- GRANTS note — applying the exact `from public, anon, authenticated`
+-- lesson from the rate-limit RPCs above from the start, not just
+-- `from public`). Deliberately NOT asserted for service_role either:
+-- like handle_new_user(), this is a trigger function the trigger
+-- mechanism invokes regardless of any EXECUTE grant, so no role needs
+-- (or has) one.
+select is(
+  (
+    select count(*)::int
+    from (values
+      ('public', 'public.provision_agent_settings()'),
+      ('anon', 'public.provision_agent_settings()'),
+      ('authenticated', 'public.provision_agent_settings()'),
+      ('service_role', 'public.provision_agent_settings()')
+    ) as role_fn(role_name, fn_signature)
+    where has_function_privilege(role_name, fn_signature, 'EXECUTE')
+  ),
+  0,
+  'PUBLIC, anon, authenticated, and service_role all lack EXECUTE on provision_agent_settings() — only the trigger mechanism can call it'
 );
 
 -- ---------------------------------------------------------------------

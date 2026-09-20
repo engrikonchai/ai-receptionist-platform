@@ -160,6 +160,34 @@ select ok(
   exists(select 1 from public.widget_settings where business_id = (select value from fixtures where key = 'business_a_id')),
   'owner A can select their own widget_settings'
 );
+select ok(
+  exists(select 1 from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  'owner A can select their own agent_settings (auto-provisioned by the on_business_created trigger)'
+);
+
+update public.agent_settings
+set tone = 'friendly', response_length = 'detailed', custom_instructions = 'Keep answers practical and direct.'
+where business_id = (select value from fixtures where key = 'business_a_id');
+
+-- Owner A has no INSERT policy on agent_settings — provisioning is
+-- exclusively the SECURITY DEFINER trigger's job. WITH CHECK denies
+-- every row absent a matching policy, which is a real error (same
+-- convention as the forged-lead INSERT below), not a silent no-op.
+select throws_ok(
+  format(
+    $sql$insert into public.agent_settings (business_id) values (%L)$sql$,
+    (select value from fixtures where key = 'business_a_id')
+  ),
+  '42501',
+  null,
+  'owner A cannot INSERT a second agent_settings row for their own business (no owner INSERT policy)'
+);
+
+-- Owner A has no DELETE policy on agent_settings either — RLS treats a
+-- DELETE with no applicable policy as matching zero rows (the same
+-- "same-row DELETE matches 0 rows" pattern used for owner B's
+-- knowledge_items below), not an exception.
+delete from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id');
 
 -- ---------------------------------------------------------------------
 -- Owner A cannot see, forge, or modify owner B's protected rows
@@ -199,6 +227,15 @@ select is(
   0,
   'owner A cannot select owner B''s widget_settings'
 );
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'business_b_id')),
+  0,
+  'owner A cannot select owner B''s agent_settings'
+);
+
+-- A same-row UPDATE targeting owner B's agent_settings matches zero rows
+-- under RLS, the same as the businesses UPDATE above.
+update public.agent_settings set tone = 'warm' where business_id = (select value from fixtures where key = 'business_b_id');
 
 -- A same-row UPDATE targeting owner B's business matches zero rows under
 -- RLS rather than erroring — the correct way this denial actually
@@ -275,6 +312,37 @@ select is(
   'the forged lead was never actually inserted into owner B''s business'
 );
 
+-- agent_settings: owner A's own UPDATE actually took effect, owner B's
+-- row was untouched, owner A's row still exists (the DELETE attempt was
+-- silently denied, not silently succeeded), and no second row was
+-- created (the forged INSERT attempt was a real error, not a partial
+-- write).
+select is(
+  (select tone from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  'friendly',
+  'owner A''s own UPDATE to their own agent_settings actually took effect (tone)'
+);
+select is(
+  (select response_length from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  'detailed',
+  'owner A''s own UPDATE to their own agent_settings actually took effect (response_length)'
+);
+select is(
+  (select custom_instructions from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  'Keep answers practical and direct.',
+  'owner A''s own UPDATE to their own agent_settings actually took effect (custom_instructions)'
+);
+select isnt(
+  (select tone from public.agent_settings where business_id = (select value from fixtures where key = 'business_b_id')),
+  'warm',
+  'owner B''s agent_settings tone was NOT changed by owner A''s UPDATE attempt'
+);
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  1,
+  'owner A''s agent_settings row still exists — the DELETE attempt was denied, not silently applied'
+);
+
 -- ---------------------------------------------------------------------
 -- Repeat the core isolation assertion from owner B's perspective
 -- ---------------------------------------------------------------------
@@ -289,6 +357,15 @@ select is(
   (select count(*)::int from public.businesses where id = (select value from fixtures where key = 'business_a_id')),
   0,
   'owner B cannot select owner A''s business row'
+);
+select ok(
+  exists(select 1 from public.agent_settings where business_id = (select value from fixtures where key = 'business_b_id')),
+  'owner B can select their own agent_settings'
+);
+select is(
+  (select count(*)::int from public.agent_settings where business_id = (select value from fixtures where key = 'business_a_id')),
+  0,
+  'owner B cannot select owner A''s agent_settings'
 );
 
 reset role;
@@ -313,6 +390,11 @@ select is(
   (select count(*)::int from public.leads),
   0,
   'anon cannot select any leads row directly'
+);
+select is(
+  (select count(*)::int from public.agent_settings),
+  0,
+  'anon cannot select any agent_settings row directly'
 );
 
 reset role;

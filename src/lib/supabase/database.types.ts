@@ -23,7 +23,12 @@
  * `billing_checkout_attempts`, plus the `sync_business_subscription()`
  * RPC
  * (supabase/migrations/20260920100000_paddle_billing_foundation.sql —
- * NOT applied yet) — see that file's header for why it's safe.
+ * NOT applied yet) — see that file's header for why it's safe, and the
+ * brand-new `agent_settings` table
+ * (supabase/migrations/20260924090000_agent_settings_foundation.sql —
+ * NOT applied yet) — future-facing AI behavioral configuration only, not
+ * consumed by any reply engine yet; see that migration's own header for
+ * the full field-ownership audit.
  *
  * These are deliberately used as plain result-shape types (cast at the
  * query call site) rather than threaded through `SupabaseClient<Database>`'s
@@ -149,6 +154,34 @@ export interface HandoffRow {
   status: HandoffStatus;
   /** Idempotency key for a visitor-submitted handoff request — see supabase/migrations/20260918090000_handoff_idempotency.sql. Not applied yet. Null for any handoff row created another way. */
   client_request_id: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export type AgentTone = 'professional' | 'friendly' | 'warm';
+export type AgentResponseLength = 'concise' | 'balanced' | 'detailed';
+
+/**
+ * Future-facing AI *behavioral* configuration only — tone, response
+ * length, and custom instructions. Not read by any reply engine today;
+ * see supabase/migrations/20260924090000_agent_settings_foundation.sql
+ * (NOT applied yet) for the full field-ownership audit (the public
+ * widget/assistant name, welcome messages, appearance, hand-off, and
+ * language settings all keep their existing owners — none of that is
+ * duplicated here) and for why no provider/model/API key/system-prompt
+ * column exists on this table. Exactly one row per business
+ * (agent_settings_business_id_key), provisioned automatically — never
+ * created directly by application code.
+ */
+export interface AgentSettingsRow {
+  id: string;
+  business_id: string;
+  tone: AgentTone;
+  response_length: AgentResponseLength;
+  /** NULL means no custom instructions set. Never interpreted as Markdown/HTML by the client. */
+  custom_instructions: string | null;
+  /** Set only when the owner has actually saved these settings at least once; null for an untouched, auto-provisioned default row. */
+  configured_at: string | null;
   created_at: string;
   updated_at: string;
 }

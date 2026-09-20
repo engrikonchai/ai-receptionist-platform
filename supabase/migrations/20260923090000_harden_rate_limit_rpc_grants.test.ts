@@ -28,13 +28,40 @@ const executableSql = sql
   .join('\n');
 
 describe('rate-limit RPC grant-hardening migration — static contract', () => {
-  it('is timestamped after every other existing migration (forward-only, never edits an already-applied one)', () => {
-    const ownFile = '20260923090000_harden_rate_limit_rpc_grants.sql';
-    const ownTimestamp = ownFile.slice(0, 14);
-    const allMigrations = readdirSync(import.meta.dirname).filter((f) => f.endsWith('.sql'));
-    for (const file of allMigrations) {
-      if (file === ownFile) continue;
-      expect(file.slice(0, 14) <= ownTimestamp).toBe(true);
+  it('is timestamped after every migration that predates it (forward-only, never edits an already-applied one)', () => {
+    // A fixed list of the migrations that actually existed when this
+    // file was written, not a live directory scan: this migration is
+    // forward-only relative to ITS OWN history, not relative to every
+    // migration a future milestone adds afterward (e.g.
+    // 20260924090000_agent_settings_foundation.sql, timestamped later,
+    // is expected and correct — scanning the live directory here would
+    // make this test fail every time a later migration is added, which
+    // is exactly backwards for a "forward-only" check). Still catches
+    // the real regression this test cares about: one of these prior,
+    // already-applied migrations being renamed to a timestamp at or
+    // after this one.
+    const ownTimestamp = '20260923090000';
+    const priorMigrationFiles = [
+      '20260910090000_self_contained_database_baseline.sql',
+      '20260915000100_platform_onboarding.sql',
+      '20260915170200_inbox_human_replies.sql',
+      '20260915184700_knowledge_items_owner_policies.sql',
+      '20260915193000_repair_live_rls_policies.sql',
+      '20260916120000_widget_allowed_origins.sql',
+      '20260916130000_widget_rate_limits.sql',
+      '20260917140000_widget_installation_confirmed.sql',
+      '20260918090000_handoff_idempotency.sql',
+      '20260920100000_paddle_billing_foundation.sql',
+      '20260921090000_single_business_per_owner.sql',
+      '20260922090000_self_contained_user_provisioning.sql'
+    ];
+    const allMigrations = new Set(
+      readdirSync(import.meta.dirname).filter((f) => f.endsWith('.sql'))
+    );
+
+    for (const file of priorMigrationFiles) {
+      expect(allMigrations.has(file)).toBe(true);
+      expect(file.slice(0, 14) < ownTimestamp).toBe(true);
     }
   });
 

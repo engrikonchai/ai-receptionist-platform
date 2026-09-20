@@ -132,6 +132,14 @@ select ok(to_regclass('public.paddle_webhook_events') is not null, 'public.paddl
 select ok(to_regclass('public.widget_rate_limits') is not null, 'public.widget_rate_limits exists');
 
 -- =====================================================================
+-- agent_settings — future-facing AI behavioral configuration only, owned
+-- by 20260924090000_agent_settings_foundation.sql. See this file's own
+-- assertions below for its FK/UNIQUE/CHECK constraints, RLS policies,
+-- and provisioning trigger.
+-- =====================================================================
+select ok(to_regclass('public.agent_settings') is not null, 'public.agent_settings exists');
+
+-- =====================================================================
 -- Verified foreign key targets and ON DELETE rules
 -- =====================================================================
 -- profiles.id -> auth.users(id) ON DELETE CASCADE — proven four
@@ -179,6 +187,9 @@ select is(pg_temp.fk_delete_rule('public', 'business_subscriptions', 'business_i
 select is(pg_temp.fk_target('public', 'billing_checkout_attempts', 'business_id'), 'public.businesses', 'billing_checkout_attempts.business_id references public.businesses');
 select is(pg_temp.fk_delete_rule('public', 'billing_checkout_attempts', 'business_id'), 'CASCADE', 'billing_checkout_attempts.business_id -> businesses is ON DELETE CASCADE');
 
+select is(pg_temp.fk_target('public', 'agent_settings', 'business_id'), 'public.businesses', 'agent_settings.business_id references public.businesses');
+select is(pg_temp.fk_delete_rule('public', 'agent_settings', 'business_id'), 'CASCADE', 'agent_settings.business_id -> businesses is ON DELETE CASCADE');
+
 -- =====================================================================
 -- Real named UNIQUE constraints (pg_constraint contype='u'), not merely
 -- standalone unique indexes
@@ -198,6 +209,10 @@ select ok(
 select ok(
   exists(select 1 from pg_constraint where conrelid = 'public.widget_settings'::regclass and conname = 'widget_settings_business_id_key' and contype = 'u'),
   'widget_settings_business_id_key is a real UNIQUE constraint'
+);
+select ok(
+  exists(select 1 from pg_constraint where conrelid = 'public.agent_settings'::regclass and conname = 'agent_settings_business_id_key' and contype = 'u'),
+  'agent_settings_business_id_key is a real UNIQUE constraint (exactly one row per business)'
 );
 
 -- businesses_owner_id_key remains the intentionally PARTIAL unique
@@ -234,9 +249,32 @@ select ok(exists(select 1 from pg_constraint where conname = 'leads_source_check
 select ok(exists(select 1 from pg_constraint where conname = 'leads_status_check' and contype = 'c'), 'leads_status_check exists');
 select ok(exists(select 1 from pg_constraint where conname = 'handoffs_status_check' and contype = 'c'), 'handoffs_status_check exists');
 select ok(exists(select 1 from pg_constraint where conname = 'widget_settings_position_check' and contype = 'c'), 'widget_settings_position_check exists');
+select ok(exists(select 1 from pg_constraint where conname = 'agent_settings_tone_check' and contype = 'c'), 'agent_settings_tone_check exists');
+select ok(exists(select 1 from pg_constraint where conname = 'agent_settings_response_length_check' and contype = 'c'), 'agent_settings_response_length_check exists');
+select ok(exists(select 1 from pg_constraint where conname = 'agent_settings_custom_instructions_check' and contype = 'c'), 'agent_settings_custom_instructions_check exists');
+
+-- agent_settings.tone / response_length: exact default values.
+select is(
+  (select column_default from information_schema.columns where table_schema = 'public' and table_name = 'agent_settings' and column_name = 'tone'),
+  '''professional''::text',
+  'agent_settings.tone defaults to professional'
+);
+select is(
+  (select column_default from information_schema.columns where table_schema = 'public' and table_name = 'agent_settings' and column_name = 'response_length'),
+  '''balanced''::text',
+  'agent_settings.response_length defaults to balanced'
+);
+select ok(
+  (select is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'agent_settings' and column_name = 'custom_instructions') = 'YES',
+  'agent_settings.custom_instructions is nullable'
+);
+select ok(
+  (select is_nullable from information_schema.columns where table_schema = 'public' and table_name = 'agent_settings' and column_name = 'configured_at') = 'YES',
+  'agent_settings.configured_at is nullable'
+);
 
 -- =====================================================================
--- set_updated_at(): SECURITY INVOKER, and its 7 verified triggers
+-- set_updated_at(): SECURITY INVOKER, and its 8 verified triggers
 -- =====================================================================
 select ok(
   exists(
@@ -258,8 +296,8 @@ select is(
       and n.nspname = 'public'
       and not t.tgisinternal
   ),
-  7,
-  'exactly 7 set_updated_at triggers exist (profiles, businesses, knowledge_items, conversations, leads, handoffs, widget_settings)'
+  8,
+  'exactly 8 set_updated_at triggers exist (profiles, businesses, knowledge_items, conversations, leads, handoffs, widget_settings, agent_settings)'
 );
 
 select ok(
@@ -294,6 +332,35 @@ select is(
 );
 
 -- =====================================================================
+-- Repository-owned agent_settings provisioning trigger: a small,
+-- dedicated AFTER INSERT trigger on public.businesses (not a rewrite of
+-- on_auth_user_created/handle_new_user() above) — exists exactly once,
+-- calls provision_agent_settings().
+-- =====================================================================
+select is(
+  (
+    select count(*)::int
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    where c.relname = 'businesses' and t.tgname = 'on_business_created' and not t.tgisinternal
+  ),
+  1,
+  'on_business_created trigger exists exactly once on public.businesses'
+);
+
+select is(
+  (
+    select p.proname
+    from pg_trigger t
+    join pg_class c on c.oid = t.tgrelid
+    join pg_proc p on p.oid = t.tgfoid
+    where c.relname = 'businesses' and t.tgname = 'on_business_created' and not t.tgisinternal
+  ),
+  'provision_agent_settings',
+  'on_business_created calls public.provision_agent_settings()'
+);
+
+-- =====================================================================
 -- RLS enabled on every business-scoped/internal table
 -- =====================================================================
 select is(
@@ -303,13 +370,13 @@ select is(
     where relnamespace = 'public'::regnamespace
       and relname in (
         'profiles', 'businesses', 'knowledge_items', 'conversations', 'messages',
-        'leads', 'handoffs', 'widget_settings',
+        'leads', 'handoffs', 'widget_settings', 'agent_settings',
         'business_subscriptions', 'billing_checkout_attempts', 'paddle_webhook_events', 'widget_rate_limits'
       )
       and relrowsecurity
   ),
-  12,
-  'Row Level Security is enabled on all 8 foundational tables and all 4 billing/internal tables'
+  13,
+  'Row Level Security is enabled on all 9 foundational tables and all 4 billing/internal tables'
 );
 
 -- =====================================================================
@@ -317,8 +384,8 @@ select is(
 -- =====================================================================
 select is(
   (select count(*)::int from pg_policies where schemaname = 'public'),
-  26,
-  'exactly 26 RLS policies exist across all foundational + business_subscriptions tables'
+  28,
+  'exactly 28 RLS policies exist across all foundational + business_subscriptions + agent_settings tables'
 );
 
 select is(
@@ -350,6 +417,8 @@ select is(
       ('handoffs', 'handoffs_delete_own'),
       ('widget_settings', 'widget_settings_select_own'),
       ('widget_settings', 'widget_settings_update_own'),
+      ('agent_settings', 'agent_settings_select_own'),
+      ('agent_settings', 'agent_settings_update_own'),
       ('business_subscriptions', 'business_subscriptions_select_own')
     ) as expected(tbl, pol)
     where exists (
@@ -357,8 +426,17 @@ select is(
       where schemaname = 'public' and tablename = expected.tbl and policyname = expected.pol
     )
   ),
-  26,
+  28,
   'every expected owner-scoped policy exists under its exact name'
+);
+
+-- agent_settings never has an owner-facing INSERT or DELETE policy — the
+-- row is only ever created by provision_agent_settings() (SECURITY
+-- DEFINER) and never deleted by the app.
+select is(
+  (select count(*)::int from pg_policies where schemaname = 'public' and tablename = 'agent_settings' and cmd in ('INSERT', 'DELETE')),
+  0,
+  'agent_settings has zero INSERT/DELETE policies'
 );
 
 -- =====================================================================
