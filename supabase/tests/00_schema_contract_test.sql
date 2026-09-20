@@ -360,6 +360,31 @@ select is(
   'on_business_created calls public.provision_agent_settings()'
 );
 
+-- provision_agent_settings(): SECURITY DEFINER with search_path pinned
+-- to '' (empty) — the strictest hardening, stricter than this repo's
+-- other existing SECURITY DEFINER functions (which pin to `public`
+-- instead). Checked directly against pg_proc, not inferred.
+select ok(
+  (
+    select prosecdef
+    from pg_proc
+    where proname = 'provision_agent_settings' and pronamespace = 'public'::regnamespace
+  ),
+  'public.provision_agent_settings() is SECURITY DEFINER (prosecdef = true)'
+);
+select ok(
+  (
+    -- Confirmed against a real local Postgres instance: `set search_path
+    -- = ''` is stored in pg_proc.proconfig as the literal text
+    -- `search_path=""` (embedded double quotes denoting an empty
+    -- identifier list), not `search_path=`.
+    select 'search_path=""' = any(proconfig)
+    from pg_proc
+    where proname = 'provision_agent_settings' and pronamespace = 'public'::regnamespace
+  ),
+  'public.provision_agent_settings() has search_path pinned to empty (search_path="") in proconfig'
+);
+
 -- =====================================================================
 -- RLS enabled on every business-scoped/internal table
 -- =====================================================================

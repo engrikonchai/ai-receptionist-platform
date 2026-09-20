@@ -142,7 +142,6 @@ describe('agent-settings foundation migration -- static contract', () => {
     expect(sql).toMatch(/create or replace function public\.provision_agent_settings/);
     expect(sql).toMatch(/returns trigger/);
     expect(sql).toMatch(/security definer/);
-    expect(sql).toMatch(/set search_path = public/);
     expect(sql).toMatch(/drop trigger if exists on_business_created on public\.businesses;/);
     expect(sql).toMatch(
       /create trigger on_business_created\s+after insert on public\.businesses\s+for each row\s+execute function public\.provision_agent_settings\(\);/
@@ -150,6 +149,48 @@ describe('agent-settings foundation migration -- static contract', () => {
     expect(executableSql).not.toMatch(/create (or replace )?function public\.handle_new_user/i);
     expect(executableSql).not.toMatch(/after insert on auth\.users/i);
     expect(executableSql).not.toMatch(/create trigger on_auth_user_created/i);
+  });
+
+  it("provision_agent_settings() pins search_path to '' (empty), the strictest hardening, not a caller-influenceable or bare-schema value", () => {
+    const fnStart = sql.indexOf('create or replace function public.provision_agent_settings');
+    const bodyStart = sql.indexOf('as $$', fnStart);
+    const signatureBlock = sql.slice(fnStart, bodyStart);
+
+    expect(signatureBlock).toMatch(/set search_path = ''/);
+    // Never the weaker `set search_path = public` this repo's other
+    // SECURITY DEFINER functions use, and never omitted entirely (which
+    // would leave the caller's own search_path in effect).
+    expect(signatureBlock).not.toMatch(/set search_path = public\b/);
+  });
+
+  it('every relation reference inside provision_agent_settings() is schema-qualified — required since search_path is empty', () => {
+    const fnStart = sql.indexOf('create or replace function public.provision_agent_settings');
+    const fnEnd = sql.indexOf('$$;', fnStart);
+    const body = sql.slice(fnStart, fnEnd);
+
+    expect(body).toMatch(/insert into public\.agent_settings/);
+    // No bare, unqualified relation name anywhere in the executable body.
+    expect(body).not.toMatch(/insert into agent_settings\b/);
+  });
+
+  it('provision_agent_settings() never executes a dynamically built identifier (no EXECUTE/format() SQL injection surface)', () => {
+    const fnStart = sql.indexOf('create or replace function public.provision_agent_settings');
+    const fnEnd = sql.indexOf('$$;', fnStart);
+    const body = sql.slice(fnStart, fnEnd);
+
+    expect(body).not.toMatch(/\bexecute\b/i);
+    expect(body).not.toMatch(/format\s*\(/i);
+  });
+
+  it('provision_agent_settings() only ever reads NEW.id from the trigger row, never a session/request-derived value', () => {
+    const fnStart = sql.indexOf('create or replace function public.provision_agent_settings');
+    const fnEnd = sql.indexOf('$$;', fnStart);
+    const body = sql.slice(fnStart, fnEnd);
+
+    expect(body).toMatch(/values \(new\.id\)/);
+    expect(body).not.toMatch(/current_setting/i);
+    expect(body).not.toMatch(/request\.jwt/i);
+    expect(body).not.toMatch(/auth\.uid\(\)/i);
   });
 
   it("the provisioning trigger's own insert is duplicate/concurrency-safe via ON CONFLICT", () => {

@@ -196,9 +196,27 @@ on conflict (business_id) do nothing;
 -- handle_new_user() needs it -- an authenticated owner has no INSERT
 -- policy on agent_settings (by design, per this migration's own header
 -- comment), so this must run with elevated privilege regardless of who
--- or what inserted the business row. `set search_path = public` pins
--- name resolution, and every relation reference is additionally fully
--- schema-qualified, matching handle_new_user()'s own hardening.
+-- or what inserted the business row.
+--
+-- `set search_path = ''` (empty), not `set search_path = public` --
+-- deliberately stricter than this repo's other existing SECURITY
+-- DEFINER functions (handle_new_user, resolve_widget_config,
+-- check_and_increment_rate_limit, cleanup_expired_widget_rate_limits),
+-- which all pin to `public` instead. Both approaches defeat unqualified
+-- name-hijacking via a manipulated search_path (every relation
+-- reference in this function's body is fully schema-qualified,
+-- `public.agent_settings`/`public.businesses`, so name resolution never
+-- depends on search_path content either way) -- but an empty
+-- search_path additionally requires zero trust in `public` staying
+-- unwritable by anon/authenticated. This project has already been
+-- burned once by an incorrect assumption about its own default
+-- privileges (see 20260923090000_harden_rate_limit_rpc_grants.sql: this
+-- Supabase project's own defaults grant function EXECUTE directly to
+-- anon/authenticated, not merely via PUBLIC) -- rather than repeat that
+-- pattern of trusting an unverified platform default for schema `public`
+-- itself, this function simply removes the dependency entirely. `new`
+-- (the trigger row) is a PL/pgSQL record, resolved by the trigger
+-- mechanism, not a search_path lookup, so this has no behavioral effect.
 --
 -- Concurrency/duplicate safety: `on conflict (business_id) do nothing`
 -- against agent_settings_business_id_key makes a second/concurrent
@@ -219,7 +237,7 @@ create or replace function public.provision_agent_settings()
 returns trigger
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 begin
   insert into public.agent_settings (business_id)
@@ -231,7 +249,7 @@ end;
 $$;
 
 comment on function public.provision_agent_settings() is
-  'Provisions exactly one default public.agent_settings row whenever a public.businesses row is inserted -- existing businesses and new signups alike (this trigger fires for handle_new_user()''s own businesses insert too, since that insert runs through the same table). Idempotent and duplicate-safe via ON CONFLICT (business_id) against agent_settings_business_id_key. Not callable as an exposed RPC -- EXECUTE is revoked from public, anon, and authenticated below; only the trigger mechanism invokes it, regardless of any EXECUTE grant. Never logs a business id or any user data.';
+  'Provisions exactly one default public.agent_settings row whenever a public.businesses row is inserted -- existing businesses and new signups alike (this trigger fires for handle_new_user()''s own businesses insert too, since that insert runs through the same table). Idempotent and duplicate-safe via ON CONFLICT (business_id) against agent_settings_business_id_key. SECURITY DEFINER with search_path pinned to empty and every relation reference fully schema-qualified (public.agent_settings). Not callable as an exposed RPC -- EXECUTE is revoked from public, anon, and authenticated below; only the trigger mechanism invokes it, regardless of any EXECUTE grant. Never logs a business id or any user data.';
 
 -- See this migration's own GRANTS section above for why `from public,
 -- anon, authenticated` (not merely `from public`) is required.

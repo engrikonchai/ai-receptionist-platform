@@ -352,6 +352,12 @@ select throws_ok(
   null,
   'authenticated cannot execute sync_business_subscription() (service-role-only)'
 );
+select throws_ok(
+  'select public.provision_agent_settings()',
+  '42501',
+  null,
+  'authenticated cannot directly invoke provision_agent_settings() (trigger-only, no EXECUTE grant)'
+);
 
 -- Service-role-only tables remain inaccessible to authenticated too —
 -- REVOKEd explicitly in their own migrations, not merely undefended by
@@ -414,6 +420,12 @@ select throws_ok(
   '42501',
   null,
   'anon cannot select widget_rate_limits (service-role-only)'
+);
+select throws_ok(
+  'select public.provision_agent_settings()',
+  '42501',
+  null,
+  'anon cannot directly invoke provision_agent_settings() (trigger-only, no EXECUTE grant)'
 );
 
 reset role;
