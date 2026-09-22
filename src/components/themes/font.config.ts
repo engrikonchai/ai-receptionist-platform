@@ -8,6 +8,8 @@ import {
   Instrument_Sans,
   Inter,
   JetBrains_Mono,
+  Libre_Baskerville,
+  Manrope,
   Merriweather,
   Mulish,
   Playfair_Display,
@@ -102,6 +104,28 @@ const fontPlayfairDisplay = Playfair_Display({
   variable: '--font-playfair-display'
 });
 
+/**
+ * The Daylight public marketing system's two typefaces (see
+ * docs/daylight-design-system.md) — Manrope for interface/display type,
+ * Libre Baskerville reserved for customer quotations and narrative
+ * "billboard" moments. Scoped to `.daylight-marketing` only, via
+ * src/styles/daylight.css's own `--font-daylight-sans`/
+ * `--font-daylight-serif` mapping — never applied as the dashboard's
+ * base font.
+ */
+const fontManrope = Manrope({
+  subsets: ['latin'],
+  weight: ['400', '500', '600', '700', '800'],
+  variable: '--font-manrope'
+});
+
+const fontLibreBaskerville = Libre_Baskerville({
+  subsets: ['latin'],
+  weight: ['400', '700'],
+  style: ['normal', 'italic'],
+  variable: '--font-libre-baskerville'
+});
+
 export const fontVariables = cn(
   fontSans.variable,
   fontMono.variable,
@@ -118,5 +142,7 @@ export const fontVariables = cn(
   fontSpaceMono.variable,
   fontJetBrainsMono.variable,
   fontMerriweather.variable,
-  fontPlayfairDisplay.variable
+  fontPlayfairDisplay.variable,
+  fontManrope.variable,
+  fontLibreBaskerville.variable
 );
