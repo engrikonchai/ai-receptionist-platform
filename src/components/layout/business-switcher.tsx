@@ -19,21 +19,24 @@ import type { BusinessRow } from '@/lib/supabase/database.types';
 export function BusinessSwitcher({ businesses }: { businesses: BusinessRow[] }) {
   const active = businesses[0] ?? null;
 
+  // Shell anatomy: business identity is a compact single-line pill (26px
+  // avatar, 10px/12px padding, name only — no secondary caption line),
+  // not the two-line stacked "name / role" treatment a generic
+  // team-switcher component defaults to.
   if (!active) {
     return (
       <SidebarMenu>
         <SidebarMenuItem>
           <SidebarMenuButton
-            size='lg'
             disabled
-            className='bg-muted border-sidebar-border disabled:opacity-100 cursor-default border group-data-[collapsible=icon]:border-0'
+            className='bg-secondary border-sidebar-border disabled:opacity-100 h-auto cursor-default gap-2.5 border px-3 py-2.5 group-data-[collapsible=icon]:border-0'
           >
             <div className='bg-accent text-accent-foreground flex aspect-square size-6.5 shrink-0 items-center justify-center rounded-lg'>
               <Icons.workspace className='size-3.5' />
             </div>
             <div className='grid flex-1 text-left text-sm leading-tight'>
-              <span className='truncate font-medium'>No business found</span>
-              <span className='text-muted-foreground truncate text-xs'>
+              <span className='truncate font-bold'>No business found</span>
+              <span className='text-muted-foreground truncate text-xs font-normal'>
                 Contact support if this persists
               </span>
             </div>
@@ -47,9 +50,8 @@ export function BusinessSwitcher({ businesses }: { businesses: BusinessRow[] }) 
     <SidebarMenu>
       <SidebarMenuItem>
         <SidebarMenuButton
-          size='lg'
           disabled
-          className='bg-muted border-sidebar-border disabled:opacity-100 cursor-default border group-data-[collapsible=icon]:border-0'
+          className='bg-secondary border-sidebar-border disabled:opacity-100 h-auto cursor-default gap-2.5 border px-3 py-2.5 group-data-[collapsible=icon]:border-0'
         >
           <div className='bg-accent text-accent-foreground flex aspect-square size-6.5 shrink-0 items-center justify-center rounded-lg text-[11px] font-extrabold'>
             {active.name
@@ -59,10 +61,7 @@ export function BusinessSwitcher({ businesses }: { businesses: BusinessRow[] }) 
               .join('')
               .toUpperCase()}
           </div>
-          <div className='grid flex-1 text-left text-sm leading-tight'>
-            <span className='truncate font-medium'>{active.name}</span>
-            <span className='text-muted-foreground truncate text-xs'>Business</span>
-          </div>
+          <span className='truncate text-sm font-bold'>{active.name}</span>
         </SidebarMenuButton>
       </SidebarMenuItem>
     </SidebarMenu>

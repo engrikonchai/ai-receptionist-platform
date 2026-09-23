@@ -5,7 +5,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
@@ -15,6 +14,7 @@ import {
   SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarRail,
+  SidebarSeparator,
   useSidebar
 } from '@/components/ui/sidebar';
 import { navGroups } from '@/config/nav-config';
@@ -113,108 +113,118 @@ export default function AppSidebar({
 
   return (
     <Sidebar collapsible='icon' container={portalContainer}>
-      <SidebarHeader className='gap-3'>
+      <SidebarHeader>
         <Link
           href='/dashboard/overview'
           aria-label='Platform — go to Overview'
-          className='focus-visible:outline-ring flex items-center gap-2 px-2 focus-visible:outline-2 focus-visible:outline-offset-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0'
+          className='focus-visible:outline-ring flex items-center gap-2.5 px-1 focus-visible:outline-2 focus-visible:outline-offset-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0'
         >
           <span className='bg-sidebar-primary text-sidebar-primary-foreground flex size-6.5 shrink-0 items-center justify-center rounded-[9px]'>
             <Icons.logo className='size-3.5' aria-hidden='true' />
           </span>
-          <span className='text-foreground truncate text-[15px] font-extrabold tracking-[-0.01em] group-data-[collapsible=icon]:hidden'>
+          <span className='text-foreground truncate text-[16px] font-extrabold tracking-[-0.01em] group-data-[collapsible=icon]:hidden'>
             Platform
           </span>
         </Link>
         <BusinessSwitcher businesses={businesses} />
       </SidebarHeader>
       <SidebarContent className='overflow-x-hidden'>
-        {filteredGroups.map((group) => (
-          <SidebarGroup key={group.label || 'ungrouped'} className='py-0'>
-            {group.label && <SidebarGroupLabel>{group.label}</SidebarGroupLabel>}
-            <SidebarMenu>
-              {group.items.map((item) => {
-                const Icon = item.icon ? Icons[item.icon] : Icons.logo;
-                const hasSubItems = item?.items && item.items.length > 0;
-                const parentActive =
-                  hasSubItems && item.items!.some((sub) => isNavItemActive(pathname, sub.url));
-                return hasSubItems ? (
-                  <Collapsible
-                    key={item.title}
-                    defaultOpen={item.isActive || parentActive}
-                    render={<SidebarMenuItem />}
-                  >
-                    <CollapsibleTrigger
-                      render={
-                        <SidebarMenuButton
-                          tooltip={item.title}
-                          isActive={parentActive}
-                          className={cn('group/collapsible', parentActive && ACTIVE_NAV_INSET_BAR)}
-                        />
-                      }
+        {filteredGroups.map((group, groupIndex) => (
+          <React.Fragment key={group.label || 'ungrouped'}>
+            {/* Component Rules table shows a single 1px divider between
+                the product-feature nav items and the account-area items
+                (Team/Settings/Billing) — never a visible text label like
+                "Main"/"Workspace" — so the group boundary is marked with
+                a hairline instead of SidebarGroupLabel. */}
+            {groupIndex > 0 && <SidebarSeparator className='my-2' />}
+            <SidebarGroup className='gap-1 py-0'>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const Icon = item.icon ? Icons[item.icon] : Icons.logo;
+                  const hasSubItems = item?.items && item.items.length > 0;
+                  const parentActive =
+                    hasSubItems && item.items!.some((sub) => isNavItemActive(pathname, sub.url));
+                  return hasSubItems ? (
+                    <Collapsible
+                      key={item.title}
+                      defaultOpen={item.isActive || parentActive}
+                      render={<SidebarMenuItem />}
                     >
-                      {item.icon && <Icon />}
-                      <span>{item.title}</span>
-                      <Icons.chevronRight className='ml-auto transition-transform duration-200 group-data-panel-open/collapsible:rotate-90' />
-                    </CollapsibleTrigger>
-                    <CollapsibleContent>
-                      <SidebarMenuSub>
-                        {item.items?.map((subItem) => {
-                          const subActive = isNavItemActive(pathname, subItem.url);
-                          return (
-                            <SidebarMenuSubItem key={subItem.title}>
-                              <SidebarMenuSubButton
-                                render={
-                                  <Link
-                                    href={subItem.url}
-                                    aria-label={subItem.title}
-                                    onClick={closeMobileSidebar}
-                                  />
-                                }
-                                isActive={subActive}
-                                className={cn(subActive && ACTIVE_NAV_INSET_BAR)}
-                              >
-                                <span>{subItem.title}</span>
-                              </SidebarMenuSubButton>
-                            </SidebarMenuSubItem>
-                          );
-                        })}
-                      </SidebarMenuSub>
-                    </CollapsibleContent>
-                  </Collapsible>
-                ) : (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton
-                      render={
-                        <Link
-                          href={item.url}
-                          aria-label={item.title}
-                          aria-current={isNavItemActive(pathname, item.url) ? 'page' : undefined}
-                          onClick={closeMobileSidebar}
-                        />
-                      }
-                      tooltip={item.title}
-                      isActive={isNavItemActive(pathname, item.url)}
-                      className={cn(isNavItemActive(pathname, item.url) && ACTIVE_NAV_INSET_BAR)}
-                    >
-                      <Icon />
-                      <span>{item.title}</span>
-                    </SidebarMenuButton>
-                    {NAV_BADGE_COUNT[item.title] &&
-                      badgeCountByKind[NAV_BADGE_COUNT[item.title]] > 0 && (
-                        <SidebarMenuBadge
-                          aria-label={`${badgeCountByKind[NAV_BADGE_COUNT[item.title]]} ${
-                            item.title === 'Inbox' ? 'pending handoffs' : 'new leads'
-                          }`}
-                        >
-                          {badgeCountByKind[NAV_BADGE_COUNT[item.title]]}
-                        </SidebarMenuBadge>
-                      )}
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroup>
+                      <CollapsibleTrigger
+                        render={
+                          <SidebarMenuButton
+                            tooltip={item.title}
+                            isActive={parentActive}
+                            className={cn(
+                              'group/collapsible',
+                              parentActive && ACTIVE_NAV_INSET_BAR
+                            )}
+                          />
+                        }
+                      >
+                        {item.icon && <Icon />}
+                        <span>{item.title}</span>
+                        <Icons.chevronRight className='ml-auto transition-transform duration-200 group-data-panel-open/collapsible:rotate-90' />
+                      </CollapsibleTrigger>
+                      <CollapsibleContent>
+                        <SidebarMenuSub>
+                          {item.items?.map((subItem) => {
+                            const subActive = isNavItemActive(pathname, subItem.url);
+                            return (
+                              <SidebarMenuSubItem key={subItem.title}>
+                                <SidebarMenuSubButton
+                                  render={
+                                    <Link
+                                      href={subItem.url}
+                                      aria-label={subItem.title}
+                                      onClick={closeMobileSidebar}
+                                    />
+                                  }
+                                  isActive={subActive}
+                                  className={cn(subActive && ACTIVE_NAV_INSET_BAR)}
+                                >
+                                  <span>{subItem.title}</span>
+                                </SidebarMenuSubButton>
+                              </SidebarMenuSubItem>
+                            );
+                          })}
+                        </SidebarMenuSub>
+                      </CollapsibleContent>
+                    </Collapsible>
+                  ) : (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton
+                        render={
+                          <Link
+                            href={item.url}
+                            aria-label={item.title}
+                            aria-current={isNavItemActive(pathname, item.url) ? 'page' : undefined}
+                            onClick={closeMobileSidebar}
+                          />
+                        }
+                        tooltip={item.title}
+                        isActive={isNavItemActive(pathname, item.url)}
+                        className={cn(isNavItemActive(pathname, item.url) && ACTIVE_NAV_INSET_BAR)}
+                      >
+                        <Icon />
+                        <span>{item.title}</span>
+                      </SidebarMenuButton>
+                      {NAV_BADGE_COUNT[item.title] &&
+                        badgeCountByKind[NAV_BADGE_COUNT[item.title]] > 0 && (
+                          <SidebarMenuBadge
+                            aria-label={`${badgeCountByKind[NAV_BADGE_COUNT[item.title]]} ${
+                              item.title === 'Inbox' ? 'pending handoffs' : 'new leads'
+                            }`}
+                          >
+                            {badgeCountByKind[NAV_BADGE_COUNT[item.title]]}
+                          </SidebarMenuBadge>
+                        )}
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroup>
+          </React.Fragment>
         ))}
       </SidebarContent>
       <SidebarFooter>

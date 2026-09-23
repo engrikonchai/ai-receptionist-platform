@@ -75,14 +75,6 @@ export const navGroups: NavGroup[] = [
     label: 'Workspace',
     items: [
       {
-        title: 'Billing',
-        url: '/dashboard/billing',
-        icon: 'billing',
-        shortcut: ['b', 'i'],
-        isActive: false,
-        items: []
-      },
-      {
         title: 'Team',
         url: '/dashboard/team',
         icon: 'teams',
@@ -95,6 +87,14 @@ export const navGroups: NavGroup[] = [
         url: '/dashboard/settings',
         icon: 'settings',
         shortcut: ['s', 'e'],
+        isActive: false,
+        items: []
+      },
+      {
+        title: 'Billing',
+        url: '/dashboard/billing',
+        icon: 'billing',
+        shortcut: ['b', 'i'],
         isActive: false,
         items: []
       }
