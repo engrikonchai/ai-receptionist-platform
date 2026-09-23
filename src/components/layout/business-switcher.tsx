@@ -23,9 +23,13 @@ export function BusinessSwitcher({ businesses }: { businesses: BusinessRow[] }) 
     return (
       <SidebarMenu>
         <SidebarMenuItem>
-          <SidebarMenuButton size='lg' disabled className='cursor-default'>
-            <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg'>
-              <Icons.workspace className='size-4' />
+          <SidebarMenuButton
+            size='lg'
+            disabled
+            className='bg-muted border-sidebar-border disabled:opacity-100 cursor-default border group-data-[collapsible=icon]:border-0'
+          >
+            <div className='bg-accent text-accent-foreground flex aspect-square size-6.5 shrink-0 items-center justify-center rounded-lg'>
+              <Icons.workspace className='size-3.5' />
             </div>
             <div className='grid flex-1 text-left text-sm leading-tight'>
               <span className='truncate font-medium'>No business found</span>
@@ -42,9 +46,18 @@ export function BusinessSwitcher({ businesses }: { businesses: BusinessRow[] }) 
   return (
     <SidebarMenu>
       <SidebarMenuItem>
-        <SidebarMenuButton size='lg' disabled className='cursor-default'>
-          <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg'>
-            <Icons.workspace className='size-4' />
+        <SidebarMenuButton
+          size='lg'
+          disabled
+          className='bg-muted border-sidebar-border disabled:opacity-100 cursor-default border group-data-[collapsible=icon]:border-0'
+        >
+          <div className='bg-accent text-accent-foreground flex aspect-square size-6.5 shrink-0 items-center justify-center rounded-lg text-[11px] font-extrabold'>
+            {active.name
+              .split(/\s+/)
+              .slice(0, 2)
+              .map((word) => word[0])
+              .join('')
+              .toUpperCase()}
           </div>
           <div className='grid flex-1 text-left text-sm leading-tight'>
             <span className='truncate font-medium'>{active.name}</span>
