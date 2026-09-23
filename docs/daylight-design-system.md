@@ -245,10 +245,10 @@ as reasoning or generating novel answers.
   includes a fourth "Help" link. No public Help route exists in this
   repository, so it was intentionally omitted rather than shipped as a dead
   link — exactly as this milestone's own instructions require.
-- **"Try the demo" → "See how it works"**: the interactive demo isn't built
-  in this milestone (Milestone 2). The secondary CTA instead scrolls to the
-  static product-preview section (`#product-preview`) — never a fake or
-  dead demo route.
+- **"Try the demo" → "See how it works"**: kept as the approved milestone-1
+  label; both instances on the landing page (hero and final CTA) now link to
+  the real `/demo` interactive route added in Milestone 2, rather than a
+  same-page scroll or a fake destination.
 - **Footer "PRODUCT" list items** (Chat widget / Inbox / Knowledge Base):
   rendered as plain text, not links — the approved export shows them with no
   `href`, and none maps to one specific on-page anchor.
@@ -268,3 +268,44 @@ as reasoning or generating novel answers.
   Either way, the palette/type/spacing values above are already the
   reusable source of truth — no re-deriving them from the design export a
   second time.
+
+## Milestone 2 — public interactive demo (`/demo`)
+
+Built on `src/features/demo/`, reusing every Daylight token above (no new
+palette). Two deliberate deviations from this doc's own "how future
+milestones should adopt this system" note above, and why:
+
+- **Not nested under `src/app/(marketing)/`.** `/demo` is its own top-level
+  route (`src/app/demo/page.tsx`), applying `.daylight-marketing` directly
+  rather than inheriting `MarketingHeader`. The landing page's header nav
+  (`NAV_LINKS` — Product / How it works / Demo) is a set of same-page
+  section anchors (`#capabilities`, etc.) that don't exist on `/demo`;
+  reusing that header would have shipped dead anchor links. `DemoHeader`
+  (`src/features/demo/components/demo-header.tsx`) is a small, dedicated
+  header instead: a real "Back to Platform" link to `/`, plus the same
+  `/login` and `/signup` destinations.
+- **Not an extension of `ProductPreview`.** That component stays exactly as
+  Milestone 1 left it — a static, six-step illustration on the landing page
+  itself. `/demo` is a separate, fully interactive experience with its own
+  typed state machine; `ProductPreview` was not proven to compose cleanly
+  with real chat state, so it was left untouched rather than force-fit.
+
+**Isolation boundary** (so a future milestone can swap in real AI without
+touching UI code): all demo content and logic lives in
+`src/features/demo/` and imports nothing from `src/features/widget`,
+`src/features/inbox`, `src/features/leads`, or any Supabase client.
+
+- `scenarios.ts` — fixed, fictional business/Knowledge Base data.
+- `match-answer.ts` — a small local keyword matcher, the demo's stand-in for
+  the (also keyword-based) production reply engine. Replacing this one file
+  with a real AI call is the intended integration point; it takes a
+  business and a string and returns a typed result, nothing more.
+- `use-demo-chat.ts` — a typed reducer plus one effect that simulates a
+  short "typing" delay before resolving through `match-answer.ts`. No
+  network calls, no `localStorage`, no Supabase.
+- `components/` — presentational only; every side effect goes through the
+  reducer's action creators.
+
+No component in this route calls `fetch`, a Supabase client, or any
+`src/features/widget`/`inbox`/`leads` service function — verified by the
+import boundary above and exercised by `e2e/demo.spec.ts`.
