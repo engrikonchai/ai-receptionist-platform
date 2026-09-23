@@ -27,7 +27,7 @@ export function SetupChecklist({ progress }: { progress: SetupProgress }) {
   const [collapsed, setCollapsed] = useState(progress.isComplete);
 
   return (
-    <Card>
+    <Card className='shadow-sm'>
       <CardHeader>
         <button
           type='button'
@@ -36,7 +36,7 @@ export function SetupChecklist({ progress }: { progress: SetupProgress }) {
           className='flex w-full items-center justify-between gap-3 text-left'
         >
           <div className='min-w-0'>
-            <CardTitle className='flex items-center gap-2'>
+            <CardTitle className='flex items-center gap-2 text-[15px] font-extrabold'>
               {progress.isComplete && (
                 <Icons.circleCheck className='text-primary size-4 shrink-0' aria-hidden='true' />
               )}
@@ -47,14 +47,17 @@ export function SetupChecklist({ progress }: { progress: SetupProgress }) {
             </p>
           </div>
           <Icons.chevronDown
-            className={cn('size-4 shrink-0 transition-transform', !collapsed && 'rotate-180')}
+            className={cn(
+              'text-muted-foreground size-4 shrink-0 transition-transform',
+              !collapsed && 'rotate-180'
+            )}
             aria-hidden='true'
           />
         </button>
         <Progress
           value={(progress.completedCount / progress.totalCount) * 100}
           aria-label='Setup checklist progress'
-          className='mt-1'
+          className='mt-2'
         />
       </CardHeader>
       {!collapsed && (
@@ -69,20 +72,20 @@ export function SetupChecklist({ progress }: { progress: SetupProgress }) {
                       aria-hidden='true'
                     />
                     <div className='min-w-0'>
-                      <p className='text-foreground text-sm font-medium'>{item.label}</p>
+                      <p className='text-foreground text-sm font-bold'>{item.label}</p>
                     </div>
                   </div>
                 ) : (
                   <Link
                     href={item.href}
-                    className='hover:bg-muted/50 -mx-2 flex items-start gap-2.5 rounded-lg px-2 py-1.5 transition-colors'
+                    className='hover:bg-muted/50 focus-visible:outline-ring -mx-2 flex items-start gap-2.5 rounded-lg px-2 py-1.5 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2'
                   >
                     <Icons.circle
                       className='text-muted-foreground mt-0.5 size-4 shrink-0'
                       aria-hidden='true'
                     />
                     <div className='min-w-0 flex-1'>
-                      <p className='text-foreground text-sm font-medium'>{item.label}</p>
+                      <p className='text-foreground text-sm font-bold'>{item.label}</p>
                       <p className='text-muted-foreground text-sm'>{item.description}</p>
                     </div>
                     <Icons.chevronRight
