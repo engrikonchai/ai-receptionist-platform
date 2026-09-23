@@ -42,6 +42,12 @@
   --daylight-danger: #c2410c;
   --daylight-danger-tint: #fff0ea;
   --daylight-focus: #aab2e4;
+  /* Form-input border — "Design System.dc.html" §06 "Inputs and
+     controls" gives inputs their own, slightly cooler border than
+     --daylight-border (hairlines/card borders, from Handoff.dc.html).
+     Kept as its own token rather than reusing --daylight-border so a
+     future non-auth form can adopt the exact same input treatment. */
+  --daylight-input-border: #d8dcf1;
   /* Muted/emphasis text specifically for content sitting ON a solid
      --daylight-indigo background (the widget-preview header, the final
      CTA band) — distinct from the on-navy tones below, which are for
@@ -97,6 +103,7 @@
     --color-daylight-danger: var(--daylight-danger);
     --color-daylight-danger-tint: var(--daylight-danger-tint);
     --color-daylight-focus: var(--daylight-focus);
+    --color-daylight-input-border: var(--daylight-input-border);
     --color-daylight-on-indigo-muted: var(--daylight-on-indigo-muted);
     --color-daylight-on-indigo-emphasis: var(--daylight-on-indigo-emphasis);
     --color-daylight-navy: var(--daylight-navy);
