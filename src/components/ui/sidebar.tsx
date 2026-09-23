@@ -149,11 +149,18 @@ function Sidebar({
   className,
   children,
   dir,
+  container,
   ...props
 }: React.ComponentProps<'div'> & {
   side?: 'left' | 'right';
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
+  /** Portal target for the mobile `Sheet` — see `SheetContent`'s own
+   * `container` prop. Lets a caller keep the mobile drawer inside a
+   * scoped ancestor (e.g. `.daylight-dashboard`) instead of Base UI's
+   * default `document.body`, which would silently drop any token this
+   * component's own colors resolve from. Omit for the default. */
+  container?: React.ComponentProps<typeof SheetContent>['container'];
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
@@ -187,6 +194,7 @@ function Sidebar({
             } as React.CSSProperties
           }
           side={side}
+          container={container}
         >
           <SheetHeader className='sr-only'>
             <SheetTitle>Sidebar</SheetTitle>
