@@ -145,15 +145,17 @@ test.describe('/ does not weaken existing route protection', () => {
     await expect(page).toHaveURL(/\/login\?next=%2Fdashboard%2Foverview/);
   });
 
-  test('/login and /signup still render their real forms, unaffected by the Daylight scope', async ({
-    page
-  }) => {
+  test('/login and /signup still render their real, functioning forms', async ({ page }) => {
+    // As of Milestone 3, /login and /signup are deliberately given their
+    // own Daylight-scoped auth layout (see
+    // src/features/auth/components/daylight/daylight-auth-shell.tsx), so
+    // they legitimately do carry a `.daylight-marketing` ancestor now —
+    // unlike the dashboard, which must never be Daylight-scoped. This
+    // test keeps guarding the invariant that actually matters: the real
+    // forms still render and still work, regardless of styling scope.
     await page.goto('/login');
     await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
-    const hasDaylightScope = await page.evaluate(
-      () => document.querySelectorAll('.daylight-marketing').length
-    );
-    expect(hasDaylightScope).toBe(0);
+    await expect(page.getByLabel('Email')).toBeVisible();
 
     await page.goto('/signup');
     await expect(page.getByRole('heading', { name: 'Create your account' })).toBeVisible();
