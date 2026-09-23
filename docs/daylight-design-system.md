@@ -739,3 +739,171 @@ whether 22px card radius is right for that specific page's content),
 never re-deriving colors, which are already correct. `PlaceholderPage`
 (Team, Channels) and `PageContainer` are the two shared building blocks
 most future page work will touch first.
+
+## Milestone 5 — Dashboard Overview page
+
+The first page-level Daylight pass: `/dashboard/overview`'s actual content
+and layout, not just its colors (which Milestone 4's shell already
+handled). **No other dashboard page's content changed.**
+
+### Overview layout rules
+
+Composition, top to bottom, all inside the shared `PageContainer` (page
+title = `Welcome, {realDisplayName}`, description = `You're managing
+{realBusinessName}.` — unchanged from pre-Milestone-5, already real, no
+filler paragraph):
+
+1. **Setup progress** (`SetupChecklist`, restyled in place — see below).
+2. **Operational summary** — a 2-column (`sm:grid-cols-2`) row of real
+   metric tiles.
+3. **Quick actions + Billing summary** — a `lg:grid-cols-3` row: quick
+   actions take the left 2/3 (`lg:col-span-2`), billing the right 1/3.
+   Below `lg` (1024px) both stack full-width, billing under quick actions.
+
+Vertical rhythm is a single `gap-6` (24px) column — no nested full-width
+filler cards, no repeated card-in-card borders.
+
+### Overview card hierarchy
+
+- **Setup checklist** — the one card most likely to need full attention
+  first; unchanged position (top), restyled to the Daylight shadow/weight
+  language (`shadow-sm`, `text-[15px] font-extrabold` title, `font-bold`
+  item labels) while its collapse/expand behavior, item hrefs, and exact
+  progress text (`"{n} of {total} completed"`) are byte-for-byte
+  unchanged — a component-level test suite already locks that contract.
+- **Metric tiles** (`MetricTile`, new, `src/features/overview/components/`)
+  — a single, whole-tile `<Link>` (never a card with a separate button
+  inside it, to keep keyboard behavior unambiguous), `shadow-sm`, 34px/800
+  numeral, 13px/700 muted label, matching `Dashboard.dc.html`'s Overview
+  metric-card treatment.
+- **Quick-action tiles** (`QuickActions`, new) — the same link-wrapped
+  tile pattern, an icon badge + bold label + real-data caption. The
+  primary destination (Inbox) gets a filled `--primary` tile instead of a
+  separate visually-competing button, matching the Component Rules
+  table's "one indigo action per view."
+- **Billing summary** (`BillingSummary`, new) — a single `shadow-sm` card,
+  restyled but functionally identical to the pre-Milestone-5 billing card.
+
+### Metric presentation rules
+
+Only two metric tiles exist, because only two metrics are backed by data
+this page already loads: **New leads** and **Pending handoffs**. Both
+link to their real destination (`/dashboard/leads`, `/dashboard/inbox`)
+with a screen-reader-friendly, correctly-pluralized accessible name (e.g.
+`"1 new lead — view leads"` vs `"3 new leads — view leads"`). Pending
+handoffs uses the destructive/attention icon color when its count is
+`> 0` — a purposeful status color, never color alone (the numeral and
+hint text are also present).
+
+### Setup-progress treatment
+
+Unchanged behavior from before this milestone: starts expanded whenever
+incomplete, collapses automatically only once every item is complete,
+and a chevron/"Collapse" control always keeps it reopenable — never
+permanently hidden. Progress semantics (`<Progress>`'s own
+`aria-label='Setup checklist progress'`, a real percentage value) are
+unchanged; only the visual weight/shadow was refreshed.
+
+### Action hierarchy
+
+Quick actions are exactly the three real, pre-existing Overview
+destinations — Inbox, Knowledge, Widget — no `Agent`/`Team`/other route
+was added, since none was already part of Overview's behavior. Each
+non-Inbox tile's caption is a *real* value already loaded by this page
+(`activeKnowledgeItemCount`, `widget.widget_enabled`) — reused, not
+newly queried — never decorative copy.
+
+### Empty-state rules
+
+- **Zero leads / zero handoffs**: each tile shows a short, real hint
+  ("None waiting right now" / "Nothing awaiting a reply"); when *both*
+  are zero, one additional reassurance line appears below the row
+  ("Nothing needs attention yet…") — unchanged copy from
+  pre-Milestone-5, just relocated into the new layout.
+- **Zero active Knowledge entries**: the Knowledge quick-action caption
+  reads "No active entries yet" instead of a count.
+- **No subscription yet**: Billing summary shows "Start your subscription
+  to keep using the AI receptionist." and a "View billing" (not "Manage
+  billing") button — unchanged from pre-Milestone-5.
+- **Leads/handoffs fetch failed**: an explicit "We couldn't load your
+  leads and handoffs right now. Refresh the page to try again." message
+  replaces the metric tiles entirely — never silently shown as zero.
+
+### Responsive behavior
+
+Metric tiles and quick-action tiles both collapse to a single column
+below their `sm`/`lg` breakpoints — verified with no horizontal overflow
+and no oversized empty areas at 390/768/1024/1440px, in both themes, via
+a temporary (removed before commit) preview route rendering six real
+prop-driven states side by side.
+
+### Supported real data mappings
+
+| Overview element | Real source | New query? |
+| --- | --- | --- |
+| Page title/description | `ctx.profile.display_name` / `ctx.user.email`, `activeBusiness.name` | No — pre-existing |
+| Setup checklist | `computeSetupProgress()` | No — pre-existing |
+| New leads tile | `leads` count, `status='new'` | No — pre-existing |
+| Pending handoffs tile | `handoffs` count, `status='new'` | No — pre-existing |
+| Knowledge quick-action caption | `activeKnowledgeItemCount` (already loaded for setup progress) | No — reused |
+| Widget quick-action caption | `widget.widget_enabled` (already loaded for setup progress) | No — reused |
+| Billing summary | `business_subscriptions` row (only queried when Paddle is configured) | No — pre-existing |
+
+No new Supabase query was added anywhere in this milestone.
+
+### Design deviations from Dashboard.dc.html
+
+- **No "Conversations handled" / "Unanswered questions" metric tiles,
+  no "Conversation volume" chart, no "Recent conversations" activity
+  feed, no "Resolution status" breakdown, no "Knowledge Base coverage
+  %."** None of these map to data this page loads (or loads anywhere
+  reachable without a new query). Per this milestone's explicit
+  "real data only" rule, they were omitted rather than faked; the
+  Knowledge Base's one real, already-loaded value
+  (`activeKnowledgeItemCount`) surfaces instead as the Manage Knowledge
+  quick-action's caption.
+- **No top-bar "Test the widget" primary button or "Last 7 days" filter
+  pill.** Both are page-level controls in the mockup's Overview screen,
+  but the shell's top bar is Milestone 4's territory (`Header`,
+  unmodified for this milestone) — adding a page-specific action there
+  would mean modifying a shared shell primitive "merely to make this one
+  page match," which this milestone's own instructions rule out. The one
+  real primary action (Inbox) instead lives in the Quick Actions tile
+  row.
+- **`Card` retains its existing `ring-1 ring-foreground/10` + `shadow-sm`
+  treatment** rather than the mockup's borderless, shadow-only card —
+  `Card` is a shared shadcn primitive used by every other dashboard page;
+  this milestone's instructions explicitly forbid modifying it "merely to
+  make this one page match."
+
+### Shell bugfixes discovered during verification
+
+Visual verification at 768px (tablet) with this milestone's own real
+content surfaced two pre-existing, previously-undetected shell
+regressions — both fixed as minimal, purely defensive corrections, not
+design changes:
+
+- **`SidebarInset` (`src/components/ui/sidebar.tsx`) lacked `min-w-0`.**
+  A flex item without it reports its entire subtree's min-content size as
+  its automatic minimum — meaning any single `truncate`/nowrap element
+  anywhere on a dashboard page (a long real business/owner name in the
+  page title, for instance) could silently force the whole content column
+  wider than the space the desktop sidebar leaves it. Added `min-w-0`
+  alongside the existing `flex-1` — a one-line fix with zero visual
+  effect whenever content already fits, confirmed via the full Playwright
+  suite.
+- **The header's inline search box (`SearchInput`) was `shrink-0` with a
+  fixed `md:w-56` width** (set in the Milestone 4 fidelity pass) that
+  doesn't actually fit between the 248px desktop sidebar and the
+  viewport edge at exactly the 768px tablet breakpoint. Deferred its
+  visible breakpoint from `md` (768px) to `lg` (1024px), where it already
+  fits — Cmd+K still opens the same search at every width; only this one
+  inline entry point is deferred.
+- **`Heading`'s title row (`src/components/ui/heading.tsx`) wrapped its
+  `truncate` `<h2>` in a flex row without `min-w-0`**, so `truncate`
+  never actually engaged for a long title — it silently overflowed
+  instead of ellipsizing. Added `min-w-0` to that row.
+
+All three are pre-existing structural issues from earlier milestones,
+surfaced — not introduced — by this milestone's real long-name testing;
+none change appearance for any content that already fit.
