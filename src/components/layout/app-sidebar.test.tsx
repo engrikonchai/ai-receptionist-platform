@@ -17,8 +17,10 @@ import AppSidebar from './app-sidebar';
  * See app-sidebar.tsx's closeMobileSidebar for the fix.
  */
 
+const mockUsePathname = vi.fn<() => string>().mockReturnValue('/dashboard/overview');
+
 vi.mock('next/navigation', () => ({
-  usePathname: () => '/dashboard/overview',
+  usePathname: () => mockUsePathname(),
   useRouter: () => ({ push: vi.fn(), refresh: vi.fn(), replace: vi.fn(), back: vi.fn() })
 }));
 
@@ -85,6 +87,7 @@ function renderSidebar() {
 beforeEach(() => {
   setOpenMobile.mockReset();
   mockUseNavBadgeCounts.mockReset().mockReturnValue({ pendingHandoffCount: 0, newLeadCount: 0 });
+  mockUsePathname.mockReset().mockReturnValue('/dashboard/overview');
 });
 
 describe('AppSidebar — Widget nav item', () => {
@@ -149,6 +152,47 @@ describe('AppSidebar — mobile sidebar auto-close', () => {
     fireEvent.click(screen.getByRole('link', { name: 'Widget' }));
 
     expect(setOpenMobile).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppSidebar — product brand mark', () => {
+  it('links back to Overview and never claims the current page is "Overview"', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    renderSidebar();
+
+    const brand = screen.getByRole('link', { name: 'Platform — go to Overview' });
+    expect(brand).toHaveAttribute('href', '/dashboard/overview');
+  });
+});
+
+describe('AppSidebar — active navigation state', () => {
+  it('marks the current route\'s nav item with aria-current="page", and no other item', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    mockUsePathname.mockReturnValue('/dashboard/leads');
+    renderSidebar();
+
+    expect(screen.getByRole('link', { name: 'Leads' })).toHaveAttribute('aria-current', 'page');
+    expect(screen.getByRole('link', { name: 'Overview' })).not.toHaveAttribute('aria-current');
+    expect(screen.getByRole('link', { name: 'Widget' })).not.toHaveAttribute('aria-current');
+  });
+
+  it('keeps the parent item active while on a path nested beneath its URL', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    // No real route is nested today, but the active-match logic must
+    // already handle one correctly — see isNavItemActive's own doc
+    // comment in app-sidebar.tsx.
+    mockUsePathname.mockReturnValue('/dashboard/leads/123');
+    renderSidebar();
+
+    expect(screen.getByRole('link', { name: 'Leads' })).toHaveAttribute('aria-current', 'page');
+  });
+
+  it('never marks a nav item active for an unrelated route that merely shares a text prefix', () => {
+    mockUseSidebar.mockReturnValue({ isMobile: false, setOpenMobile });
+    mockUsePathname.mockReturnValue('/dashboard/leads-archive');
+    renderSidebar();
+
+    expect(screen.getByRole('link', { name: 'Leads' })).not.toHaveAttribute('aria-current');
   });
 });
 
