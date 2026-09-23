@@ -11,7 +11,7 @@ export function Heading({ title, description, infoContent }: HeadingProps) {
   return (
     <div className='min-w-0'>
       <div className='flex items-center gap-2'>
-        <h2 className='truncate text-2xl font-bold tracking-tight sm:text-3xl'>{title}</h2>
+        <h2 className='truncate text-2xl font-extrabold tracking-tight sm:text-3xl'>{title}</h2>
         {infoContent && (
           <div className='shrink-0 pt-1'>
             <InfoButton content={infoContent} />

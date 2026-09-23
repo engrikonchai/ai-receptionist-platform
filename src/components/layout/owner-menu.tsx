@@ -23,6 +23,22 @@ export function OwnerMenu({ email, profile }: { email: string; profile: ProfileR
   const [isSigningOut, setIsSigningOut] = useState(false);
 
   const displayName = profile?.display_name?.trim() || email || 'Account';
+  // Shell anatomy footer row: circle avatar with initials + name + role
+  // label ("Owner" — the real, single-owner-model role, not a fictional
+  // team-member title) rather than the generic user-icon square this
+  // component started from. Full email stays reachable in the opened
+  // menu's own label below; an sr-only span keeps it in this trigger's
+  // accessible name too, matching the account context screen readers and
+  // existing tests already rely on.
+  const initials = /\s/.test(displayName)
+    ? displayName
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((word) => word[0])
+        .join('')
+        .toUpperCase()
+    : displayName.slice(0, 2).toUpperCase();
 
   async function handleSignOut() {
     setIsSigningOut(true);
@@ -57,12 +73,15 @@ export function OwnerMenu({ email, profile }: { email: string; profile: ProfileR
               />
             }
           >
-            <div className='bg-sidebar-primary text-sidebar-primary-foreground flex aspect-square size-8 shrink-0 items-center justify-center rounded-lg'>
-              <Icons.user2 className='size-4' />
+            <div className='bg-chart-2 text-foreground flex aspect-square size-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold'>
+              {initials}
             </div>
             <div className='grid flex-1 text-left text-sm leading-tight'>
-              <span className='truncate font-medium'>{displayName}</span>
-              <span className='text-muted-foreground truncate text-xs'>{email}</span>
+              <span className='truncate font-bold'>{displayName}</span>
+              <span className='text-muted-foreground truncate text-xs'>
+                Owner
+                <span className='sr-only'> · {email}</span>
+              </span>
             </div>
             <Icons.chevronsDown className='ml-auto size-4' />
           </DropdownMenuTrigger>

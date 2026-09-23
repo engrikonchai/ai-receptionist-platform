@@ -31,7 +31,14 @@ export function Breadcrumbs() {
               </BreadcrumbSeparator>
             )}
             {index === items.length - 1 && (
-              <BreadcrumbPage className='min-w-0 truncate'>{item.title}</BreadcrumbPage>
+              // Shell anatomy: "Page title left" — 20px/800-weight, the
+              // same treatment as the design's top-bar title — applied to
+              // the current-page crumb rather than a separate duplicate
+              // title element, so nested routes still show their full
+              // trail while a top-level route reads as a plain page title.
+              <BreadcrumbPage className='text-foreground min-w-0 truncate text-[20px] font-extrabold tracking-[-0.02em]'>
+                {item.title}
+              </BreadcrumbPage>
             )}
           </Fragment>
         ))}

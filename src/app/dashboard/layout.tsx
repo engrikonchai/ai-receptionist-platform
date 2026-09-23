@@ -81,7 +81,11 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <KBar>
-      <SidebarProvider defaultOpen={defaultOpen}>
+      <SidebarProvider
+        defaultOpen={defaultOpen}
+        className='daylight-dashboard'
+        id='daylight-dashboard-root'
+      >
         <a
           href='#main-content'
           className='bg-background ring-ring sr-only rounded-md px-3 py-2 text-sm font-medium shadow focus:not-sr-only focus:absolute focus:top-2 focus:start-2 focus:z-50 focus:ring-2'

@@ -535,3 +535,207 @@ end-to-end before this milestone; no other auth route or flow (social
 login, magic-link, passkeys, phone auth, team invitations) exists in the
 repository, and this milestone's own instructions explicitly forbid adding
 any of them.
+
+## Milestone 4 — Dashboard shell
+
+A visual refresh of the authenticated `/dashboard/*` shell only — the
+sidebar, header, and account/theme chrome shared by every dashboard page.
+**No individual page's content, data, queries, or mutations changed.**
+
+### Scope / isolation architecture
+
+A third, independent scope alongside the two Daylight already has:
+
+| Scope | File | Applied on | Token style |
+| --- | --- | --- | --- |
+| `.daylight-marketing` | `daylight.css` | Public landing, `/demo`, and (since Milestone 3) the auth pages | Invented `daylight-*`-prefixed tokens/utilities |
+| `.daylight-dashboard` | `daylight-dashboard.css` | The authenticated dashboard shell only | **Overrides the standard shadcn variable names** |
+
+The dashboard is the one surface that was already built entirely on
+shared shadcn components (`Card`, `Button`, `Sidebar`, `PageContainer`,
+…) consuming the standard variable names (`--background`, `--card`,
+`--primary`, `--sidebar`, `--border`, …). So `daylight-dashboard.css`
+overrides those *same* names, scoped to a `.daylight-dashboard` class —
+never `:root` or `[data-theme='zen']` themselves, which stay exactly as
+`zen.css` already defines them. Because it's the same variable names,
+every existing dashboard page and every shared component repaints
+automatically through the CSS cascade, with **zero markup changes to any
+individual page** — the mechanism that makes "restyle the shell without
+touching page content" possible at all. See `daylight-dashboard.css`'s
+own header comment for the full reasoning.
+
+The scope is applied in exactly one place: `className='daylight-dashboard'`
+on the `SidebarProvider` in `src/app/dashboard/layout.tsx`. `AccountRecovery`
+(the `AuthShell`-based fallback for an incomplete profile or a
+multiple-businesses account) is rendered as an early `return` *before*
+that `SidebarProvider`, so it is structurally outside the scope and stays
+on plain Zen tokens, unaffected — the same "never touch `AuthShell`"
+boundary Milestone 3 established, now automatic rather than manual since
+the scope simply never wraps it.
+
+### Dashboard shell tokens
+
+Light values are sourced from `Handoff.dc.html`'s "COLOR TOKENS" table
+and `Dashboard.dc.html`'s "SHELL ANATOMY" panel; dark values from
+`Design System.dc.html` §09 "Dark mode mapping" (light→dark, explicit),
+reconciled with `Handoff.dc.html`'s own terser dark-mode note where the
+two overlap.
+
+| Token | Light | Dark |
+| --- | --- | --- |
+| `--background` (canvas) | `#EFF1FA` | `#12152B` |
+| `--card`/`--sidebar` (surface) | `#FFFFFF` | `#1C2040` |
+| `--foreground` (ink) | `#1B1F3B` | `#EEF0FB` |
+| `--muted-foreground` | `#6B7192` | `#9AA0C6` |
+| `--primary`/`--sidebar-primary` (indigo) | `#4B57C9` | `#7C88E8` |
+| `--border`/`--input`/`--sidebar-border` | `#E8EBF7` / `#D8DCF1` | `#2A3060` |
+| `--destructive` | `#A82926` | `#F0724B` |
+| `--sidebar-accent` (active-nav fill) | `#EFF1FA` | `#242C57` |
+| `--sidebar-accent-foreground` (active-nav text) | `#4B57C9` | `#B9C0E8` |
+
+`--primary`/`--sidebar-primary` are **not** simply lifted for a filled
+button: `--primary-foreground` is set to the dark canvas color
+(`#12152B`) rather than white, because white text on the lighter dark-mode
+indigo (`#7C88E8`) lands under 4.5:1 contrast — dark text on that same
+light indigo clears ~6:1. `--font-sans` is overridden to Manrope (reusing
+the same font already loaded for the marketing scope — no second font
+load), so the dashboard now shares its typeface with the rest of the
+product. `--radius` is raised to `0.75rem` (buttons/`rounded-lg` → 12px,
+cards/`rounded-xl` → 16px) — a deliberately more conservative lift than
+the mockup's literal 22px card radius; see "Design deviations" below.
+
+### Sidebar rules
+
+- **Brand mark.** A new row above the business-identity pill:
+  `Icons.logo` in a solid `--sidebar-primary` tile + the "Platform"
+  wordmark, linking to `/dashboard/overview`. The sidebar previously had
+  no product branding at all, only the business name.
+- **Business identity.** `BusinessSwitcher` is unchanged in behavior — a
+  disabled, non-interactive display (V1 is one-owner-one-business; see
+  its own doc comment) — only visually refreshed: initials avatar
+  (derived from the real business name, never invented) in a bordered
+  `--muted` pill instead of a plain icon tile, and `disabled:opacity-100`
+  added so the disabled state no longer fades the business name to 50%
+  opacity — a real "low-contrast text" bug in the pre-Daylight sidebar,
+  fixed while already touching this component.
+- **Active state.** `data-active` already drove a bold weight + tint fill
+  + indigo text via `sidebarMenuButtonVariants`; this milestone adds the
+  Component Rules table's "3px inset left bar"
+  (`shadow-[inset_3px_0_0_var(--sidebar-accent-foreground)]`) and a real
+  `aria-current="page"` on the active link — so the active item is never
+  signaled by color alone (weight + fill + bar + `aria-current` together).
+- **Active-route matching** (`isNavItemActive` in `app-sidebar.tsx`) was
+  upgraded from exact `pathname === url` to `pathname === url ||
+  pathname.startsWith(url + '/')`, so a parent item stays correctly
+  highlighted for any path nested beneath it. No route in this app is
+  actually nested today (verified — every dashboard route is a flat
+  top-level page), so this is a forward-looking correctness fix, not a
+  behavior change to anything currently reachable.
+- **Badges** (`Inbox`/`Leads` pending counts) are unchanged — they were
+  already real, business-scoped Supabase counts (`use-nav-badge-counts.ts`),
+  never fake.
+- **Icon-collapsed rail and mobile drawer** are the existing shadcn
+  `Sidebar` primitive's own behavior, unchanged — only re-themed via the
+  token cascade.
+
+### Header rules
+
+Unchanged structurally — `SidebarTrigger`, `Breadcrumbs`, the `SearchInput`
+(opens the existing, real Cmd+K `KBar` palette — not decorative, not
+added by this milestone), and `ThemeModeToggle` all already used
+`bg-background`/`border`/etc. and repaint automatically. No markup
+changes were needed here.
+
+### Content-container rules
+
+`PageContainer` (the shared page heading + content wrapper every
+dashboard page already uses) was **not modified** — its spacing/max-width
+was already reasonable and restyling it wasn't required to prevent shell
+breakage, so it was left alone per this milestone's "small spacing
+corrections... must be documented" instruction (there are none to
+document here). Its `Heading`/`Card`/`Badge`/`Button` children repaint
+automatically through the same token cascade.
+
+### Mobile navigation behavior
+
+The existing shadcn `Sidebar` mobile pattern (a `Sheet`/Base UI `Dialog`
+drawer — real focus trap, Escape-to-close, scroll lock, closes itself on
+navigation via `closeMobileSidebar()`) is reused entirely; **no new
+bottom-navigation system was built** — see "Design deviations" below for
+why. One real bug was found and fixed: the mobile Sheet portals to
+`document.body` by default, which sits *outside* `.daylight-dashboard`
+and would have silently rendered the drawer in plain Zen colors (visually
+confirmed during verification — a warm-beige drawer over an indigo-toned
+page). Fixed the same way Milestone 1 fixed the identical issue for the
+marketing mobile nav: a new `container` prop on `Sidebar` (`ui/sidebar.tsx`)
+and `AppSidebar` now points the Sheet's portal at
+`#daylight-dashboard-root` (the id on `SidebarProvider`'s own wrapper).
+
+### Light/dark theme behavior
+
+`next-themes`, its `ThemeProvider` config, `attribute='class'`,
+persistence, and system-preference behavior are all completely
+untouched — the dashboard reads and writes the exact same global theme
+preference as the rest of the app (including the Milestone 3 auth dark
+theme). Toggling it now produces a real, calm dark dashboard (deep navy
+canvas/surfaces, never pure black — verified by
+`daylight-dashboard.test.ts`) instead of the old Zen dark theme's
+near-black `oklch(0.1913 0 0)` background.
+
+### Design deviations
+
+- **No new bottom-navigation bar.** `Handoff.dc.html`'s responsive table
+  and `Dashboard.dc.html`'s "SHELL ANATOMY" panel both describe a bottom
+  tab bar ("Overview / Inbox / Leads / More") below ~900px. This
+  milestone's own body text explicitly lists "navigation opens in a
+  drawer/sheet **or** the existing mobile pattern" as a sufficient
+  mobile solution, and separately warns against inventing new
+  bottom-navigation systems. Building one would mean deciding, unreviewed,
+  which 3 of the 10 real nav items are demoted into a new "More" overflow
+  menu — a real information-architecture decision the design reference
+  doesn't actually specify beyond a one-line table cell. The existing,
+  already-accessible Sheet drawer satisfies "genuinely usable mobile
+  navigation" without that risk. Flagged here explicitly in case a bottom
+  tab bar is wanted as a deliberate follow-up.
+- **`--radius: 0.75rem`, not the mockup's literal 22px card radius.**
+  Scaling the single `--radius` primitive lifts buttons to the spec's
+  12–14px range exactly and cards to 16px — most of the way there without
+  a full page-by-page pass to confirm every existing dense table/form
+  still reads well at a full 22px corner radius.
+- **`--secondary`/`--accent` dark fills** (`#1C2040`/`#242C57`) and the
+  **dark button-fill foreground** (`#12152B` instead of white — see
+  "Dashboard shell tokens" above) aren't given explicit values by either
+  design reference; both are reasoned, documented interpolations within
+  the same approved dark navy family, not new invented hues.
+- **Business-identity avatar now shows real initials** instead of a
+  generic icon (matching `Dashboard.dc.html`'s own "NS" initials-avatar
+  pattern) — derived from the real business name at render time, never a
+  hardcoded example.
+- **`disabled:opacity-100` on `BusinessSwitcher`** — a pre-existing
+  low-contrast bug (the disabled business-identity pill faded to 50%
+  opacity), fixed while this milestone was already touching the
+  component's styling.
+
+### Shell / page-content isolation — confirmed
+
+Every dashboard page's own content — Overview's metric cards, Inbox's
+conversation UI, Leads' table/filters, Knowledge's forms, Agent's
+settings controls, Channels/Team's planned-state content, Widget's
+config/install content, Settings' forms, Billing's content — was **not
+opened or edited** by this milestone. Verified: `git diff` touches only
+`src/app/dashboard/layout.tsx` (the scope class), `src/components/layout/
+app-sidebar.tsx`, `business-switcher.tsx`, `src/components/ui/sidebar.tsx`
+(the new `container` prop), `src/styles/daylight-dashboard.css` (new),
+and `src/styles/globals.css` (one import line) — no file under
+`src/app/dashboard/*/page.tsx` or any page-specific feature component was
+changed.
+
+### Future page-refresh guidance
+
+Individual dashboard pages already automatically inherit the new palette
+(same token names, same components) — a future page-level Daylight pass
+should focus on *layout/density* refinements (spacing, card composition,
+whether 22px card radius is right for that specific page's content),
+never re-deriving colors, which are already correct. `PlaceholderPage`
+(Team, Channels) and `PageContainer` are the two shared building blocks
+most future page work will touch first.

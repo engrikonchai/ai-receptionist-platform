@@ -23,9 +23,11 @@ import { IconLayoutSidebar } from '@tabler/icons-react';
 
 const SIDEBAR_COOKIE_NAME = 'sidebar_state';
 const SIDEBAR_COOKIE_MAX_AGE = 60 * 60 * 24 * 7;
-const SIDEBAR_WIDTH = '16rem';
+// 248px / 72px — the exact "SHELL ANATOMY" measures from the approved
+// Daylight Dashboard.dc.html reference, not shadcn's stock 16rem/3rem.
+const SIDEBAR_WIDTH = '15.5rem';
 const SIDEBAR_WIDTH_MOBILE = '18rem';
-const SIDEBAR_WIDTH_ICON = '3rem';
+const SIDEBAR_WIDTH_ICON = '4.5rem';
 const SIDEBAR_KEYBOARD_SHORTCUT = 'b';
 
 type SidebarContextProps = {
@@ -149,11 +151,18 @@ function Sidebar({
   className,
   children,
   dir,
+  container,
   ...props
 }: React.ComponentProps<'div'> & {
   side?: 'left' | 'right';
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
+  /** Portal target for the mobile `Sheet` — see `SheetContent`'s own
+   * `container` prop. Lets a caller keep the mobile drawer inside a
+   * scoped ancestor (e.g. `.daylight-dashboard`) instead of Base UI's
+   * default `document.body`, which would silently drop any token this
+   * component's own colors resolve from. Omit for the default. */
+  container?: React.ComponentProps<typeof SheetContent>['container'];
 }) {
   const { isMobile, state, openMobile, setOpenMobile } = useSidebar();
 
@@ -187,6 +196,7 @@ function Sidebar({
             } as React.CSSProperties
           }
           side={side}
+          container={container}
         >
           <SheetHeader className='sr-only'>
             <SheetTitle>Sidebar</SheetTitle>
@@ -320,7 +330,8 @@ function SidebarHeader({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot='sidebar-header'
       data-sidebar='header'
-      className={cn('flex flex-col gap-2 p-2', className)}
+      // Shell anatomy: sidebar inner padding "20px 14px" — pt-5/px-3.5.
+      className={cn('flex flex-col gap-4 px-3.5 pt-5 pb-2', className)}
       {...props}
     />
   );
@@ -331,7 +342,7 @@ function SidebarFooter({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot='sidebar-footer'
       data-sidebar='footer'
-      className={cn('flex flex-col gap-2 p-2', className)}
+      className={cn('flex flex-col gap-2 px-3.5 pt-2 pb-4', className)}
       {...props}
     />
   );
@@ -367,7 +378,7 @@ function SidebarGroup({ className, ...props }: React.ComponentProps<'div'>) {
     <div
       data-slot='sidebar-group'
       data-sidebar='group'
-      className={cn('relative flex w-full min-w-0 flex-col p-2', className)}
+      className={cn('relative flex w-full min-w-0 flex-col px-3.5 py-1', className)}
       {...props}
     />
   );
@@ -455,7 +466,11 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button group/menu-button flex w-full items-center gap-2 overflow-hidden rounded-md p-2 text-left text-sm ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:size-8! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-medium data-active:text-sidebar-accent-foreground [&_svg]:size-4 [&_svg]:shrink-0 [&>span:last-child]:truncate',
+  // Component Rules table: "Nav item — height 40px, radius 12px, active =
+  // indigo text + tint fill + 3px inset left bar. Icons 20px, stroke
+  // 1.75." — 40px height, 20px icons and the 600/700 weight step below
+  // are load-bearing for shell fidelity, not shadcn's stock 32px/16px.
+  'peer/menu-button group/menu-button flex h-10 w-full items-center gap-2.5 overflow-hidden rounded-md px-3 py-2 text-left text-sm font-semibold text-sidebar-foreground ring-sidebar-ring outline-hidden transition-[width,height,padding] group-has-data-[sidebar=menu-action]/menu-item:pr-8 group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-10! group-data-[collapsible=icon]:p-2! hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2 active:bg-sidebar-accent active:text-sidebar-accent-foreground disabled:pointer-events-none disabled:opacity-50 aria-disabled:pointer-events-none aria-disabled:opacity-50 data-open:hover:bg-sidebar-accent data-open:hover:text-sidebar-accent-foreground data-active:bg-sidebar-accent data-active:font-bold data-active:text-sidebar-accent-foreground [&_svg]:size-5 [&_svg]:shrink-0 [&_svg]:stroke-[1.75] [&>span:last-child]:truncate',
   {
     variants: {
       variant: {
@@ -464,7 +479,7 @@ const sidebarMenuButtonVariants = cva(
           'bg-background shadow-[0_0_0_1px_var(--sidebar-border)] hover:bg-sidebar-accent hover:text-sidebar-accent-foreground hover:shadow-[0_0_0_1px_var(--sidebar-accent)]'
       },
       size: {
-        default: 'h-8 text-sm',
+        default: 'h-10 text-sm',
         sm: 'h-7 text-xs',
         lg: 'h-12 text-sm group-data-[collapsible=icon]:p-0!'
       }
