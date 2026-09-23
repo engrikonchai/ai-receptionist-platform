@@ -1,8 +1,8 @@
 import type { Metadata } from 'next';
-import { AuthShell } from '@/features/auth/components/auth-shell';
+import { DaylightAuthShell } from '@/features/auth/components/daylight/daylight-auth-shell';
+import { DaylightConfigNotice } from '@/features/auth/components/daylight/daylight-config-notice';
+import { DaylightInvalidLink } from '@/features/auth/components/daylight/daylight-invalid-link';
 import { ResetPasswordForm } from '@/features/auth/components/reset-password-form';
-import { ResetPasswordInvalidLink } from '@/features/auth/components/reset-password-invalid-link';
-import { SupabaseConfigNotice } from '@/features/auth/components/supabase-config-notice';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
@@ -15,9 +15,12 @@ export const dynamic = 'force-dynamic';
 export default async function ResetPasswordPage() {
   if (!isSupabaseConfigured()) {
     return (
-      <AuthShell title='Reset password' description='Choose a new password for your account.'>
-        <SupabaseConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />
-      </AuthShell>
+      <DaylightAuthShell
+        title='Reset password'
+        description='Choose a new password for your account.'
+      >
+        <DaylightConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />
+      </DaylightAuthShell>
     );
   }
 
@@ -33,18 +36,21 @@ export default async function ResetPasswordPage() {
 
   if (!user) {
     return (
-      <AuthShell
+      <DaylightAuthShell
         title='Reset link expired'
         description='This password reset link is invalid or has expired.'
       >
-        <ResetPasswordInvalidLink />
-      </AuthShell>
+        <DaylightInvalidLink />
+      </DaylightAuthShell>
     );
   }
 
   return (
-    <AuthShell title='Choose a new password' description='Enter a new password for your account.'>
+    <DaylightAuthShell
+      title='Choose a new password'
+      description='Enter a new password for your account.'
+    >
       <ResetPasswordForm />
-    </AuthShell>
+    </DaylightAuthShell>
   );
 }

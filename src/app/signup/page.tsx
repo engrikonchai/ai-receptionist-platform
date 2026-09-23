@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { AuthShell } from '@/features/auth/components/auth-shell';
+import { DaylightAuthShell } from '@/features/auth/components/daylight/daylight-auth-shell';
 import { SignupForm } from '@/features/auth/components/signup-form';
 import { isSupabaseConfigured } from '@/lib/supabase/env';
 import { loadOwnerContext } from '@/lib/supabase/owner-context';
@@ -22,8 +22,11 @@ export default async function SignupPage() {
   }
 
   return (
-    <AuthShell title='Create your account' description='Set up owner access for your business.'>
+    <DaylightAuthShell
+      title='Create your account'
+      description='Set up owner access for your business.'
+    >
       <SignupForm />
-    </AuthShell>
+    </DaylightAuthShell>
   );
 }

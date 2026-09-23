@@ -1,6 +1,6 @@
 import { redirect } from 'next/navigation';
 import type { Metadata } from 'next';
-import { AuthShell } from '@/features/auth/components/auth-shell';
+import { DaylightAuthShell } from '@/features/auth/components/daylight/daylight-auth-shell';
 import { LoginForm } from '@/features/auth/components/login-form';
 import { PASSWORD_RESET_SUCCESS_MESSAGE } from '@/features/auth/messages';
 import { isSupabaseConfigured } from '@/lib/supabase/env';
@@ -35,12 +35,12 @@ export default async function LoginPage({
   }
 
   return (
-    <AuthShell title='Sign in' description='Sign in to manage your business.'>
+    <DaylightAuthShell title='Sign in' description='Sign in to manage your business.'>
       <LoginForm
         next={target}
         initialError={error}
         successMessage={passwordReset === 'success' ? PASSWORD_RESET_SUCCESS_MESSAGE : undefined}
       />
-    </AuthShell>
+    </DaylightAuthShell>
   );
 }

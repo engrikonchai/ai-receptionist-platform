@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SignupForm } from './signup-form';
@@ -264,5 +264,23 @@ describe('SignupForm — no sensitive values written to logs', () => {
     await screen.findByRole('alert');
 
     expect(allLoggedText()).not.toContain(VALID_PASSWORD);
+  });
+});
+
+describe('SignupForm — show/hide password', () => {
+  it('toggles the password field independently of confirm password', async () => {
+    const user = userEvent.setup();
+    render(<SignupForm />);
+
+    const password = screen.getByLabelText(/^Password/);
+    const confirm = screen.getByLabelText(/^Confirm password/);
+    expect(password).toHaveAttribute('type', 'password');
+    expect(confirm).toHaveAttribute('type', 'password');
+
+    await user.click(
+      within(password.parentElement as HTMLElement).getByRole('button', { name: 'Show password' })
+    );
+    expect(password).toHaveAttribute('type', 'text');
+    expect(confirm).toHaveAttribute('type', 'password');
   });
 });

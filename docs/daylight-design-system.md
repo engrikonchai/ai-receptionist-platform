@@ -85,6 +85,13 @@ OS/browser dark-mode preference or the dashboard's own (separate, unaffected)
 `next-themes` dark mode. This is a deliberate scope decision, not an
 oversight — see "Small deviations" below.
 
+Every Daylight token above is a fixed hex value (`.daylight-marketing`'s CSS
+custom properties never branch on `.dark`), so this holds even on the auth
+pages, which do render `<ThemeModeToggle/>` (see "Milestone 3" below) —
+toggling `next-themes`'s `dark` class on `<html>` is a real, working
+app-wide preference change, but it is a visual no-op anywhere inside
+`.daylight-marketing`, because nothing in `daylight.css` reads `.dark`.
+
 ## Palette
 
 | Token | Hex | Use |
@@ -309,3 +316,222 @@ touching UI code): all demo content and logic lives in
 No component in this route calls `fetch`, a Supabase client, or any
 `src/features/widget`/`inbox`/`leads` service function — verified by the
 import boundary above and exercised by `e2e/demo.spec.ts`.
+
+## Milestone 3 — Daylight authentication experience
+
+A **visual and usability refresh only** of the existing login, signup,
+forgot-password, reset-password, and onboarding surfaces
+(`src/app/login`, `/signup`, `/forgot-password`, `/reset-password`,
+`/onboarding`). No authentication behavior, redirect logic, cookie/session
+handling, Supabase client architecture, route protection, or onboarding
+database behavior changed — see "Authentication behavior preserved" below.
+
+### Authentication layout
+
+`DaylightAuthShell` (`src/features/auth/components/daylight/daylight-auth-shell.tsx`)
+is a new, self-contained shell — never the shared `AuthShell`
+(`src/features/auth/components/auth-shell.tsx`), which is left completely
+untouched because `AccountRecovery` still renders it directly inside
+`dashboard/layout.tsx` as a Zen-themed fallback; restyling `AuthShell` would
+have restyled that dashboard surface too.
+
+- **Header**: a real "Back to Platform" link to `/`, plus `ThemeModeToggle`
+  (parity with the original `AuthShell` — see "Deliberate deviations"
+  below), on a white `bg-white` bar with a `--daylight-border` bottom hairline.
+- **Desktop (`lg:` and up)**: two-column split — a centered, readable
+  `max-w-md` form column on the left, `DaylightAuthVisual`
+  (`daylight-auth-visual.tsx`) on the right: a navy supporting panel with the
+  real hero headline/bullets ("Website chat widget", "Your business Inbox",
+  "Human handoff") and one illustrative chat-bubble snippet — never a fake
+  screenshot, logo, or invented statistic.
+- **Mobile/tablet (below `lg:`)**: single column, `DaylightAuthVisual` is
+  `hidden` entirely so the form is the first thing shown, no scroll needed.
+  The form column uses `items-start` (not `items-center`) below `lg:` so
+  short content (e.g. the forgot-password form) never leaves an oversized
+  empty gap above it on a phone — only `lg:items-center` re-centers it once
+  the two-column layout has room.
+
+### Form-state components
+
+All new, Daylight-styled, and never shared with dashboard-facing
+components — the same `.daylight-marketing`-scoping reason as everywhere
+else in this doc: a shared component styled with `bg-background`/
+`text-foreground`/`Card`/`FieldError` would render in the wrong (Zen)
+palette if a Daylight page reused it, and a `daylight-*` class on a
+shared/dashboard component would render blank outside `.daylight-marketing`.
+
+- `daylight-text-field.tsx` / `daylight-password-field.tsx` — Daylight
+  inputs built directly on `useFieldContext()`/`useFieldInvalid()`, styled
+  with the new `--daylight-input-border` token (see "Deliberate deviations").
+  The password field adds a keyboard-accessible show/hide toggle
+  (`aria-label`/`aria-pressed`, Enter/Space-operable).
+- `daylight-field-error.tsx` — `role="alert"`, same de-duplication logic as
+  the shared `FieldError`, Daylight-colored.
+- `daylight-submit-button.tsx` — disables and shows a spinner
+  (`aria-busy`) while `form.state.isSubmitting`, preventing duplicate
+  submission. **Must be rendered inside `<form.AppForm>…</form.AppForm>`**
+  — `useFormContext()` is a separate context from the per-field context
+  `form.AppField` provides.
+- `daylight-form-message.tsx` — one banner component for every non-field
+  message: `variant='error'` → `role="alert"`; `variant='success'` /
+  `'info'` → `role="status"` (never `alert`, so a success/info message
+  doesn't interrupt a screen reader the way an error should). Accepts a
+  `ref` so the caller can move focus to it after a server error.
+- `daylight-config-notice.tsx` / `daylight-invalid-link.tsx` — thin,
+  purpose-specific wrappers around `DaylightFormMessage` for the
+  missing-Supabase-config and expired-reset-link states.
+
+### Responsive behavior
+
+Verified at 390px, 768px, and 1440px (plus the 1440px first fold) for
+`/login`, `/signup`, and `/forgot-password`: no horizontal overflow (see
+`e2e/auth-daylight.spec.ts`), no clipped form, no wrapped primary-button
+label, no oversized empty mobile area (the `items-start`/`lg:items-center`
+fix above), and a clear login↔signup path at every width.
+
+### Accessibility
+
+- Labels are always real, explicit `<label>` elements (never
+  placeholder-only), with correct `autoComplete` values preserved from the
+  pre-refresh forms.
+- Focus moves to the server/form error banner after a failed submission
+  (`errorRef` + `useEffect` in each form), via a `tabIndex={-1}` +
+  `.focus()` pattern that never fires on first page load.
+- The password show/hide toggle is a real `<button type="button">` with
+  `aria-label`/`aria-pressed`, reachable and operable by keyboard alone.
+- The submit button's `aria-busy` state is exposed to assistive tech, not
+  just visually implied by a spinner.
+- Focus-visible outlines use `--daylight-focus`, same token and 2px/offset
+  treatment as the rest of Daylight.
+
+### Scope / isolation boundary
+
+`DaylightAuthShell` applies `.daylight-marketing` on the auth pages
+themselves — the same scoping mechanism as the landing page and `/demo`,
+never a change to `zen.css`, `[data-theme='zen']`, `:root`, or any shared
+dashboard component. `e2e/daylight-landing.spec.ts`'s
+"`/login` and `/signup` still render their real, functioning forms" test
+was updated in this milestone: before Milestone 3, `/login`/`/signup` had
+*zero* `.daylight-marketing` elements (they used the Zen-themed `AuthShell`)
+and the test asserted exactly that; now that they are deliberately
+Daylight-scoped, that specific assertion is gone, but the test still guards
+what it always actually existed to protect — that the real forms render and
+work — and the dashboard itself (verified via its still-enforced signed-out
+redirect, unchanged) is never touched by any Daylight class.
+
+### Auth dark theme
+
+A follow-up to the initial (light-only) Milestone 3 work: `DaylightAuthShell`
+renders a real `<ThemeModeToggle/>` (parity with the original `AuthShell`),
+but every Daylight token is a fixed hex value, so toggling it used to be a
+visual no-op — functionally real, but not what "a real, working toggle"
+should feel like. This adds a restrained, auth-only dark variant instead of
+hiding the toggle.
+
+- **Scope.** A second marker class, `daylight-auth-scope`, sits alongside
+  `daylight-marketing` on `DaylightAuthShell` and `OnboardingShell` only.
+  `src/styles/daylight.css`'s dark overrides are keyed off
+  `.dark .daylight-marketing.daylight-auth-scope` — two classes, both
+  required — so the landing page and `/demo` (which carry only
+  `daylight-marketing`) are structurally unable to pick up this block, even
+  when the visitor's global theme preference is already dark (verified by
+  `e2e/auth-dark-theme.spec.ts`'s "public landing page never picks up the
+  auth-only dark styling" test). `zen.css`, `[data-theme='zen']`, and
+  `:root` are untouched, same as every other rule in this file.
+- **Palette.** Reuses the already-approved dark "billboard" navy family
+  (`--daylight-navy`/`-panel`/`-deep`) — already used by the landing page's
+  Trust/footer/final-CTA sections and by `DaylightAuthVisual`'s always-dark
+  supporting panel — as the dark canvas/surface, so the whole page reads as
+  a natural extension of that panel rather than a new, disconnected dark
+  design. Semantic ink/border/status tokens get restrained, contrast-checked
+  dark-calibrated values (e.g. `--daylight-danger: #FF8A65`, a warm coral —
+  not the light-mode burnt-orange value, which reads muddy on a dark
+  background). `--daylight-indigo`/`-indigo-hover` are deliberately **not**
+  overridden: white-on-indigo already contrasts at roughly 6:1 and reads
+  even richer against a dark navy canvas, so the primary button/link color
+  is identical in both modes. The canvas is a dark navy
+  (`--daylight-navy-deep`, `#12152B`), never pure black — calm, not the old
+  dense auth design.
+- **`bg-white` → `bg-daylight-surface`.** The auth/onboarding header bars,
+  the onboarding card, and the text/password input backgrounds previously
+  used a hardcoded `bg-white` (invisible to any token override). Swapped for
+  the `--daylight-surface` token (`#FFFFFF` in light, `#1A2050` in dark) so
+  they participate in the theme instead of staying a fixed white patch on a
+  dark page.
+- **One deliberate non-change:** `DaylightAuthVisual`'s small chat-bubble
+  mockup card keeps literal light colors (`bg-[#F6F7FC]`/`text-[#1B1F3B]`),
+  not the `daylight-surface-muted`/`daylight-ink` tokens. It's a fixed
+  screenshot of the real, always-light customer-facing widget UI, not part
+  of the auth page's own theme — it must look identical regardless of
+  whether the business owner is viewing the page in light or dark mode.
+- **Persistence/behavior.** No changes to `next-themes`, the `ThemeProvider`
+  config in `src/app/layout.tsx`, or the `active_theme`/theme cookie —
+  the auth pages read and write the exact same global theme preference as
+  the rest of the app.
+
+### Onboarding
+
+`OnboardingShell` (`src/features/onboarding/components/onboarding-shell.tsx`)
+gets the calmer, internal-facing treatment implied by this milestone's own
+"Dashboard.dc.html for calm internal visual language" reference: a Daylight
+canvas + header + a single white `rounded-daylight-card` around the
+content, not the expressive two-column auth layout. **Only the outer shell
+was touched.** `OnboardingFlow` (`src/features/onboarding/components/onboarding-flow.tsx`,
+613 lines — steps, validation, business-creation logic, redirects) is
+rendered unmodified as `{children}` inside the new card — the milestone's
+"preserve existing onboarding steps/required fields/business-creation
+behavior" constraint made touching that file out of scope by default, and
+no visual defect was found that required entering it.
+
+### Authentication behavior preserved
+
+Confirmed unchanged in every rewritten form (`login-form.tsx`,
+`signup-form.tsx`, `forgot-password-form.tsx`, `reset-password-form.tsx`):
+the Zod schemas (`src/features/auth/schemas/auth.ts`), the Supabase calls
+(`signInWithPassword`/`signUp`/`resetPasswordForEmail`/`updateUser`) and
+their argument shapes, `classifyUpdateError`'s error classification, the
+non-revealing forgot-password confirmation copy, the check-your-email
+branch, the `/onboarding` and `/auth/callback?next=` redirect targets, and
+every `router.push`/`router.refresh` call. Only presentation (markup,
+classNames, which components render the same state) changed. `proxy.ts`,
+`loadOwnerContext()`, `isSafeInternalPath`/`resolveSafeNextPath`
+(`src/lib/safe-redirect.ts`), and `src/app/auth/callback/route.ts` were not
+touched at all.
+
+### Deliberate deviations
+
+- **Password-visibility toggle added to login and signup.** Neither form
+  had one before this milestone (`reset-password-form.tsx` and
+  `forgot-password-form.tsx`'s password fields already did, via the shared
+  `PasswordField`). Added for consistency across every Daylight auth form
+  and because the milestone's own form-experience requirements list
+  "password-visibility controls (if already present)" alongside the general
+  instruction to improve presentation — this is presentation, not a change
+  to what is submitted.
+- **`ThemeModeToggle` restored to `DaylightAuthShell`.** An earlier pass in
+  this milestone omitted it, reasoning Daylight should be light-only like
+  the landing page; that broke the pre-existing
+  `e2e/auth-pages.spec.ts` "theme toggle switches the page ... without an
+  app change" test. Since Daylight's own tokens are fixed/light-only
+  regardless of the `dark` class (see "Light-only by design" above),
+  restoring the toggle is functionally real (it's still the same
+  app-wide `next-themes` preference) but visually inert inside
+  `.daylight-marketing` — so restoring it preserves the existing test and
+  existing functionality without reintroducing a dark Daylight variant.
+- **New token**: `--daylight-input-border` (`#D8DCF1`, from
+  `Design System.dc.html` §06 "Inputs and controls") — deliberately its own
+  token rather than reusing `--daylight-border` (hairlines/card borders,
+  from `Handoff.dc.html`), since inputs use a slightly cooler value in the
+  export. Danger/success states reuse the existing `--daylight-danger`/
+  `--daylight-success` tokens rather than adding new near-duplicate
+  colors.
+- **`OnboardingFlow`'s internals were not restyled**, only its shell — see
+  "Onboarding" above.
+
+### Missing auth functionality found but intentionally not added
+
+None. Password recovery (forgot/reset password) was already implemented
+end-to-end before this milestone; no other auth route or flow (social
+login, magic-link, passkeys, phone auth, team invitations) exists in the
+repository, and this milestone's own instructions explicitly forbid adding
+any of them.

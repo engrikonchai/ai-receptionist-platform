@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { PASSWORD_RESET_SUCCESS_MESSAGE } from '../messages';
 import { LoginForm } from './login-form';
@@ -61,5 +62,22 @@ describe('LoginForm — password reset success message', () => {
       'href',
       '/forgot-password'
     );
+  });
+});
+
+describe('LoginForm — show/hide password', () => {
+  it('toggles the password field between hidden and visible, keyboard-operable', async () => {
+    const user = userEvent.setup();
+    render(<LoginForm next='/dashboard/overview' />);
+
+    const input = screen.getByLabelText(/^Password/);
+    expect(input).toHaveAttribute('type', 'password');
+
+    const group = within(input.parentElement as HTMLElement);
+    await user.click(group.getByRole('button', { name: 'Show password' }));
+    expect(input).toHaveAttribute('type', 'text');
+
+    await user.click(group.getByRole('button', { name: 'Hide password' }));
+    expect(input).toHaveAttribute('type', 'password');
   });
 });

@@ -73,8 +73,9 @@ describe('ResetPasswordForm — show/hide password', () => {
     expect(input).toHaveAttribute('type', 'password');
 
     // Both password fields render their own toggle — scope the query to
-    // the New password field's own input group.
-    const group = within(input.closest('[data-slot="input-group"]') as HTMLElement);
+    // the New password field's own wrapper so "Show password" resolves
+    // unambiguously.
+    const group = within(input.parentElement as HTMLElement);
 
     await user.click(group.getByRole('button', { name: 'Show password' }));
     expect(input).toHaveAttribute('type', 'text');

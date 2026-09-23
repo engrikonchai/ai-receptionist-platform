@@ -42,6 +42,12 @@
   --daylight-danger: #c2410c;
   --daylight-danger-tint: #fff0ea;
   --daylight-focus: #aab2e4;
+  /* Form-input border — "Design System.dc.html" §06 "Inputs and
+     controls" gives inputs their own, slightly cooler border than
+     --daylight-border (hairlines/card borders, from Handoff.dc.html).
+     Kept as its own token rather than reusing --daylight-border so a
+     future non-auth form can adopt the exact same input treatment. */
+  --daylight-input-border: #d8dcf1;
   /* Muted/emphasis text specifically for content sitting ON a solid
      --daylight-indigo background (the widget-preview header, the final
      CTA band) — distinct from the on-navy tones below, which are for
@@ -97,6 +103,7 @@
     --color-daylight-danger: var(--daylight-danger);
     --color-daylight-danger-tint: var(--daylight-danger-tint);
     --color-daylight-focus: var(--daylight-focus);
+    --color-daylight-input-border: var(--daylight-input-border);
     --color-daylight-on-indigo-muted: var(--daylight-on-indigo-muted);
     --color-daylight-on-indigo-emphasis: var(--daylight-on-indigo-emphasis);
     --color-daylight-navy: var(--daylight-navy);
@@ -143,4 +150,56 @@
   .daylight-marketing [data-slot='sheet-content'] {
     transition-duration: 0.01ms !important;
   }
+}
+
+/*
+ * Auth-scoped dark theme.
+ *
+ * Everything above this point is deliberately light-only (see the
+ * `color-scheme: light` comment on `.daylight-marketing` above) — the
+ * public landing page and /demo never read the visitor's dark-mode
+ * preference. The authentication surface is different: it renders a
+ * real `<ThemeModeToggle/>` (parity with the original, pre-Daylight
+ * `AuthShell`), so the toggle needs to produce a real, calm dark auth
+ * experience instead of a no-op.
+ *
+ * Scoped to `.daylight-marketing.daylight-auth-scope` — a second marker
+ * class only `DaylightAuthShell` and `OnboardingShell` add alongside
+ * `daylight-marketing` — under an ancestor `.dark` (next-themes'
+ * `attribute='class'` puts `dark`/`light` on `<html>`). The landing page
+ * and /demo carry only `daylight-marketing`, never the `daylight-auth-scope`
+ * marker, so this block can never affect them even when the visitor's
+ * global theme preference is dark. Nothing here touches `zen.css`,
+ * `[data-theme='zen']`, or `:root` either — the dashboard is unaffected
+ * exactly as everywhere else in this file.
+ *
+ * Values reuse the already-approved dark "billboard" navy family
+ * (`--daylight-navy`/`-panel`/`-deep`, already used by the landing
+ * page's Trust section/footer/final CTA and by `DaylightAuthVisual`'s
+ * always-dark supporting panel) as the canvas/surface, plus new,
+ * restrained dark-calibrated variants of the semantic ink/border/status
+ * tokens — deliberately muted, not the old dense pure-black auth
+ * design. `--daylight-indigo`/`-indigo-hover` are intentionally NOT
+ * overridden: the brand indigo already has strong contrast against
+ * white text (~6:1) and reads even richer against a dark navy canvas,
+ * so the primary button/link color stays identical in both modes.
+ */
+.dark .daylight-marketing.daylight-auth-scope {
+  --daylight-ink: #f5f6fb;
+  --daylight-ink-soft: #b9c0e8;
+  --daylight-muted: #8089c0;
+  --daylight-border: #333b78;
+  --daylight-input-border: #3b4488;
+  --daylight-surface: #1a2050;
+  --daylight-surface-muted: var(--daylight-navy);
+  --daylight-canvas: var(--daylight-navy-deep);
+  --daylight-indigo-tint: rgb(75 87 201 / 22%);
+  --daylight-success: #3ecf8e;
+  --daylight-success-tint: rgb(62 207 142 / 14%);
+  --daylight-warning: #f0b45e;
+  --daylight-warning-tint: rgb(240 180 94 / 14%);
+  --daylight-danger: #ff8a65;
+  --daylight-danger-tint: rgb(255 138 101 / 14%);
+  --daylight-focus: #9aa3e8;
+  color-scheme: dark;
 }

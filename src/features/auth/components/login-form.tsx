@@ -2,14 +2,16 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { Icons } from '@/components/icons';
-import { FieldGroup } from '@/components/ui/field';
+import { useEffect, useRef, useState } from 'react';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { loginSchema } from '../schemas/auth';
-import { SupabaseConfigNotice } from './supabase-config-notice';
+import { DaylightConfigNotice } from './daylight/daylight-config-notice';
+import { DaylightFormMessage } from './daylight/daylight-form-message';
+import { DaylightPasswordField } from './daylight/daylight-password-field';
+import { DaylightSubmitButton } from './daylight/daylight-submit-button';
+import { DaylightTextField } from './daylight/daylight-text-field';
 
 /** Generic on purpose — never reveals whether the email exists. */
 const INCORRECT_CREDENTIALS_MESSAGE = 'Incorrect email or password.';
@@ -26,6 +28,11 @@ export function LoginForm({
 }) {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(initialError ?? null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (formError) errorRef.current?.focus();
+  }, [formError]);
 
   const form = useAppForm({
     defaultValues: { email: '', password: '' },
@@ -58,19 +65,13 @@ export function LoginForm({
   });
 
   if (!isSupabaseConfigured()) {
-    return <SupabaseConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
+    return <DaylightConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
   }
 
   return (
-    <div className='space-y-4'>
+    <div className='flex flex-col gap-5'>
       {successMessage && (
-        <div
-          role='status'
-          className='border-primary/30 bg-primary/10 flex items-start gap-2.5 rounded-lg border p-3 text-sm'
-        >
-          <Icons.circleCheck className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
-          <p className='text-foreground'>{successMessage}</p>
-        </div>
+        <DaylightFormMessage variant='success'>{successMessage}</DaylightFormMessage>
       )}
 
       <form
@@ -79,53 +80,49 @@ export function LoginForm({
           e.preventDefault();
           form.handleSubmit();
         }}
+        className='flex flex-col gap-5'
       >
-        <FieldGroup>
-          <form.AppField
-            name='email'
-            children={(field) => (
-              <field.TextField
-                label='Email'
-                type='email'
-                autoComplete='email'
-                placeholder='you@example.com'
-                required
-              />
-            )}
-          />
-          <form.AppField
-            name='password'
-            children={(field) => (
-              <field.TextField
-                label='Password'
-                type='password'
-                autoComplete='current-password'
-                required
-              />
-            )}
-          />
-          <div className='flex justify-end'>
-            <Link
-              href='/forgot-password'
-              className='text-muted-foreground hover:text-foreground text-xs underline underline-offset-4'
-            >
-              Forgot password?
-            </Link>
-          </div>
-          {formError && (
-            <p role='alert' className='text-destructive text-sm'>
-              {formError}
-            </p>
+        <form.AppField
+          name='email'
+          children={() => (
+            <DaylightTextField
+              label='Email'
+              type='email'
+              autoComplete='email'
+              placeholder='you@example.com'
+              required
+            />
           )}
-          <form.AppForm>
-            <form.SubmitButton className='w-full'>Sign in</form.SubmitButton>
-          </form.AppForm>
-        </FieldGroup>
+        />
+        <form.AppField
+          name='password'
+          children={() => (
+            <DaylightPasswordField label='Password' autoComplete='current-password' required />
+          )}
+        />
+        <div className='flex justify-end'>
+          <Link
+            href='/forgot-password'
+            className='text-daylight-ink-soft hover:text-daylight-ink text-xs font-semibold underline underline-offset-4'
+          >
+            Forgot password?
+          </Link>
+        </div>
+
+        {formError && (
+          <DaylightFormMessage ref={errorRef} variant='error'>
+            {formError}
+          </DaylightFormMessage>
+        )}
+
+        <form.AppForm>
+          <DaylightSubmitButton>Sign in</DaylightSubmitButton>
+        </form.AppForm>
       </form>
 
-      <p className='text-muted-foreground text-center text-sm'>
+      <p className='text-daylight-ink-soft text-center text-sm'>
         Don&apos;t have an account?{' '}
-        <Link href='/signup' className='text-foreground font-medium underline underline-offset-4'>
+        <Link href='/signup' className='text-daylight-ink font-bold underline underline-offset-4'>
           Sign up
         </Link>
       </p>
