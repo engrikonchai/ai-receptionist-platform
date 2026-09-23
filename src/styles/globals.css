@@ -16,6 +16,11 @@
    above. */
 @import './daylight.css';
 
+/* Scoped to `.daylight-dashboard` only — see that file's own header
+   comment. Overrides the same shadcn variable names `daylight.css`
+   never touches, so this and `daylight.css` can never collide. */
+@import './daylight-dashboard.css';
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

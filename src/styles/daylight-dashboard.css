@@ -1,0 +1,138 @@
+/**
+ * Daylight — dashboard shell scope (Milestone 4).
+ *
+ * Scoped entirely to `.daylight-dashboard`, applied once, directly as
+ * `className` on the `SidebarProvider` in `src/app/dashboard/layout.tsx`
+ * (its own root wrapper already renders `min-h-svh w-full`, so no extra
+ * wrapper element is needed). `AccountRecovery`/`AuthShell` — the
+ * dashboard-layout fallback for an incomplete profile or a
+ * multiple-businesses account — is rendered as an early `return` BEFORE
+ * that wrapper, so it is structurally outside this scope and stays
+ * exactly as it is, unaffected. The public landing page, `/demo`, and
+ * the auth pages use their own separate `.daylight-marketing` scope
+ * (`daylight.css`) and never carry `.daylight-dashboard` either.
+ *
+ * CRITICAL DIFFERENCE from `daylight.css`: that file invents its own
+ * `daylight-*`-prefixed token/utility namespace, because the marketing
+ * surface never reused shadcn components. The dashboard is the opposite
+ * case — `AppSidebar`, `Header`, `PageContainer`, and every existing
+ * dashboard page already consume the *standard* shadcn/Tailwind
+ * variable names (`--background`, `--card`, `--primary`, `--sidebar`,
+ * `--border`, …) via `bg-background`, `Card`, `Button`, etc. So this
+ * file overrides those SAME variable names, scoped to `.daylight-dashboard`
+ * only — never `:root` or `[data-theme='zen']` itself, which stay
+ * exactly as `zen.css` defines them for every non-dashboard surface
+ * (AccountRecovery included). Because it's the same variable names, the
+ * new palette cascades automatically into every existing dashboard page
+ * and every shared component with ZERO markup changes — the intended,
+ * "isolated and safe" mechanism for reskinning the shell without
+ * touching page content.
+ *
+ * Values are sourced from the approved Claude Design export: light
+ * values from `Handoff.dc.html`'s "COLOR TOKENS" table and
+ * `Dashboard.dc.html`'s "SHELL ANATOMY" panel; dark values from
+ * `Design System.dc.html` §09 "Dark mode mapping" (the more complete,
+ * explicit light→dark table), reconciled with `Handoff.dc.html`'s own
+ * terser dark-mode note where the two overlap (see
+ * docs/daylight-design-system.md "Dashboard shell" section for the
+ * couple of values not given explicitly by either — button-fill text
+ * color, `--secondary`/`--accent` dark fills, `--radius` — and the
+ * reasoning behind each).
+ */
+.daylight-dashboard {
+  --background: #eff1fa;
+  --foreground: #1b1f3b;
+  --card: #ffffff;
+  --card-foreground: #1b1f3b;
+  --popover: #ffffff;
+  --popover-foreground: #1b1f3b;
+  --primary: #4b57c9;
+  --primary-foreground: #ffffff;
+  --secondary: #f6f7fc;
+  --secondary-foreground: #1b1f3b;
+  --muted: #f6f7fc;
+  --muted-foreground: #6b7192;
+  --accent: #eff1fa;
+  --accent-foreground: #333d95;
+  --destructive: #a82926;
+  --destructive-foreground: #ffffff;
+  --border: #e8ebf7;
+  --input: #d8dcf1;
+  --ring: #4b57c9;
+  --chart-1: #4b57c9;
+  --chart-2: #c9ceec;
+  --chart-3: #0f7a55;
+  --chart-4: #8a5800;
+  --chart-5: #c2410c;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #4a5170;
+  --sidebar-primary: #4b57c9;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #eff1fa;
+  --sidebar-accent-foreground: #4b57c9;
+  --sidebar-border: #e8ebf7;
+  --sidebar-ring: #4b57c9;
+
+  /* Component Rules table: buttons 12–14px, cards 22px. Scaling the
+     single `--radius` primitive that `--radius-sm/md/lg/xl` all derive
+     from (see zen.css's own `@theme inline` block) to hit the button
+     target exactly (`rounded-lg` = `--radius` = 12px) lifts cards
+     (`rounded-xl` = `--radius + 4px` = 16px) most of the way there
+     without a full page-by-page pass to confirm every existing dense
+     table/form still reads well at the literal 22px the mockup shows on
+     spacious, mostly-empty screens — a deliberate, documented deviation.
+     See docs/daylight-design-system.md. */
+  --radius: 0.75rem;
+
+  /* Manrope, reusing the same font already loaded for the marketing
+     scope (`font.config.ts`) — no second font load. Set as a real
+     `font-family` (not just the custom property) so it actually
+     cascades to every descendant, the same pattern `daylight-marketing`
+     uses below. */
+  --font-sans: var(--font-manrope), sans-serif;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+.dark .daylight-dashboard {
+  --background: #12152b;
+  --foreground: #eef0fb;
+  --card: #1c2040;
+  --card-foreground: #eef0fb;
+  --popover: #1c2040;
+  --popover-foreground: #eef0fb;
+  /* Lifted two steps from the light indigo for 4.5:1 on the dark
+     surface (Design System.dc.html §09's own stated rule) — used
+     directly for text/icons/rings sitting on the dark canvas. A filled
+     button using this same light indigo needs a dark foreground
+     instead of white to keep its own text readable (white-on-#7C88E8
+     lands under 4.5:1) — see docs/daylight-design-system.md. */
+  --primary: #7c88e8;
+  --primary-foreground: #12152b;
+  --secondary: #1c2040;
+  --secondary-foreground: #eef0fb;
+  --muted: #1c2040;
+  --muted-foreground: #9aa0c6;
+  --accent: #242c57;
+  --accent-foreground: #b9c0e8;
+  --destructive: #f0724b;
+  --destructive-foreground: #12152b;
+  --border: #2a3060;
+  --input: #2a3060;
+  --ring: #7c88e8;
+  --chart-1: #7c88e8;
+  --chart-2: #3a3f7a;
+  --chart-3: #3fce93;
+  --chart-4: #f0b45e;
+  --chart-5: #f0724b;
+  --sidebar: #1c2040;
+  --sidebar-foreground: #9aa0c6;
+  --sidebar-primary: #7c88e8;
+  --sidebar-primary-foreground: #12152b;
+  --sidebar-accent: #242c57;
+  --sidebar-accent-foreground: #b9c0e8;
+  --sidebar-border: #2a3060;
+  --sidebar-ring: #7c88e8;
+  color-scheme: dark;
+}
