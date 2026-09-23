@@ -24,7 +24,7 @@ export function HeroSection() {
             <MarketingButton href='/signup' fullWidthOnMobile>
               Get started
             </MarketingButton>
-            <MarketingButton href='#product-preview' variant='secondary' fullWidthOnMobile>
+            <MarketingButton href='/demo' variant='secondary' fullWidthOnMobile>
               See how it works
             </MarketingButton>
           </div>

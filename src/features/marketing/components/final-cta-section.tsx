@@ -13,7 +13,7 @@ export function FinalCtaSection() {
         <MarketingButton href='/signup' variant='primary-on-navy' fullWidthOnMobile>
           Get started
         </MarketingButton>
-        <MarketingButton href='#product-preview' variant='secondary-on-navy' fullWidthOnMobile>
+        <MarketingButton href='/demo' variant='secondary-on-navy' fullWidthOnMobile>
           See how it works
         </MarketingButton>
       </div>
