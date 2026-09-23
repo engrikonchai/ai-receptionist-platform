@@ -10,7 +10,14 @@ interface HeadingProps {
 export function Heading({ title, description, infoContent }: HeadingProps) {
   return (
     <div className='min-w-0'>
-      <div className='flex items-center gap-2'>
+      {/* `min-w-0`: without it, this flex row's automatic minimum size is
+          the `truncate` (nowrap) title's full, un-truncated width — the
+          classic flex/truncate bug where `overflow:hidden` never actually
+          engages because the row is never given a chance to be narrower
+          than the text. A long real business name/owner name otherwise
+          forces the whole shell wider than the viewport instead of
+          ellipsizing as intended. */}
+      <div className='flex min-w-0 items-center gap-2'>
         <h2 className='truncate text-2xl font-extrabold tracking-tight sm:text-3xl'>{title}</h2>
         {infoContent && (
           <div className='shrink-0 pt-1'>

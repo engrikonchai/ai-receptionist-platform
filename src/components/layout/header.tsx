@@ -20,7 +20,13 @@ export default function Header() {
       </div>
 
       <div className='flex shrink-0 items-center gap-3 px-4 sm:px-7'>
-        <div className='hidden md:flex'>
+        {/* Deferred to `lg` (1024px), not `md` (768px): the tablet
+            breakpoint's available header width (after the 248px desktop
+            sidebar) can't fit an inline search box without overflowing —
+            confirmed by measuring the shell's own content column at
+            exactly 768px. Cmd+K still opens the same search from any
+            width; only this one visible shortcut is deferred. */}
+        <div className='hidden lg:flex'>
           <SearchInput />
         </div>
         <ThemeModeToggle />
