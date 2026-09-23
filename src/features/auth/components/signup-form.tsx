@@ -2,21 +2,28 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
-import { FieldGroup } from '@/components/ui/field';
+import { useEffect, useRef, useState } from 'react';
 import { Icons } from '@/components/icons';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { getSiteUrl } from '@/lib/site-url';
 import { signupSchema } from '../schemas/auth';
-import { SupabaseConfigNotice } from './supabase-config-notice';
+import { DaylightConfigNotice } from './daylight/daylight-config-notice';
+import { DaylightFormMessage } from './daylight/daylight-form-message';
+import { DaylightPasswordField } from './daylight/daylight-password-field';
+import { DaylightSubmitButton } from './daylight/daylight-submit-button';
+import { DaylightTextField } from './daylight/daylight-text-field';
 
 export function SignupForm() {
   const router = useRouter();
   const [formError, setFormError] = useState<string | null>(null);
   const [confirmationEmail, setConfirmationEmail] = useState<string | null>(null);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (formError) errorRef.current?.focus();
+  }, [formError]);
 
   const form = useAppForm({
     defaultValues: { displayName: '', email: '', password: '', confirmPassword: '' },
@@ -74,104 +81,97 @@ export function SignupForm() {
   });
 
   if (!isSupabaseConfigured()) {
-    return <SupabaseConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
+    return <DaylightConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
   }
 
   if (confirmationEmail) {
     return (
-      <div className='space-y-4'>
-        <div className='flex items-start gap-2.5 text-sm'>
-          <Icons.info className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
-          <div>
-            <p className='text-foreground font-medium'>Check your email</p>
-            <p className='text-muted-foreground mt-1'>
-              We sent a confirmation link to{' '}
-              <span className='text-foreground font-medium'>{confirmationEmail}</span>. Follow the
-              link to activate your account, then sign in.
-            </p>
-          </div>
-        </div>
-        <Button
-          variant='outline'
-          className='w-full'
-          render={<Link href='/login' aria-label='Back to sign in' />}
+      <div className='flex flex-col gap-5'>
+        <DaylightFormMessage variant='info'>
+          <p className='text-daylight-ink font-semibold'>Check your email</p>
+          <p className='mt-1'>
+            We sent a confirmation link to{' '}
+            <span className='text-daylight-ink font-semibold'>{confirmationEmail}</span>. Follow the
+            link to activate your account, then sign in.
+          </p>
+        </DaylightFormMessage>
+        <Link
+          href='/login'
+          aria-label='Back to sign in'
+          className='border-daylight-border text-daylight-ink hover:bg-daylight-indigo-tint inline-flex min-h-12 w-full items-center justify-center gap-2 rounded-daylight-button border-1.5 bg-white text-[15px] font-bold transition-colors'
         >
+          <Icons.arrowLeft className='size-4' aria-hidden='true' />
           Back to sign in
-        </Button>
+        </Link>
       </div>
     );
   }
 
   return (
-    <div className='space-y-4'>
+    <div className='flex flex-col gap-5'>
       <form
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
           form.handleSubmit();
         }}
+        className='flex flex-col gap-5'
       >
-        <FieldGroup>
-          <form.AppField
-            name='displayName'
-            children={(field) => (
-              <field.TextField
-                label='Display name'
-                autoComplete='name'
-                placeholder='Jane Doe'
-                required
-              />
-            )}
-          />
-          <form.AppField
-            name='email'
-            children={(field) => (
-              <field.TextField
-                label='Email'
-                type='email'
-                autoComplete='email'
-                placeholder='you@example.com'
-                required
-              />
-            )}
-          />
-          <form.AppField
-            name='password'
-            children={(field) => (
-              <field.TextField
-                label='Password'
-                type='password'
-                autoComplete='new-password'
-                description='At least 8 characters.'
-                required
-              />
-            )}
-          />
-          <form.AppField
-            name='confirmPassword'
-            children={(field) => (
-              <field.TextField
-                label='Confirm password'
-                type='password'
-                autoComplete='new-password'
-                required
-              />
-            )}
-          />
-          {formError && (
-            <p role='alert' className='text-destructive text-sm'>
-              {formError}
-            </p>
+        <form.AppField
+          name='displayName'
+          children={() => (
+            <DaylightTextField
+              label='Display name'
+              autoComplete='name'
+              placeholder='Jane Doe'
+              required
+            />
           )}
-          <form.AppForm>
-            <form.SubmitButton className='w-full'>Create account</form.SubmitButton>
-          </form.AppForm>
-        </FieldGroup>
+        />
+        <form.AppField
+          name='email'
+          children={() => (
+            <DaylightTextField
+              label='Email'
+              type='email'
+              autoComplete='email'
+              placeholder='you@example.com'
+              required
+            />
+          )}
+        />
+        <form.AppField
+          name='password'
+          children={() => (
+            <DaylightPasswordField
+              label='Password'
+              autoComplete='new-password'
+              description='At least 8 characters.'
+              required
+            />
+          )}
+        />
+        <form.AppField
+          name='confirmPassword'
+          children={() => (
+            <DaylightPasswordField label='Confirm password' autoComplete='new-password' required />
+          )}
+        />
+
+        {formError && (
+          <DaylightFormMessage ref={errorRef} variant='error'>
+            {formError}
+          </DaylightFormMessage>
+        )}
+
+        <form.AppForm>
+          <DaylightSubmitButton>Create account</DaylightSubmitButton>
+        </form.AppForm>
       </form>
 
-      <p className='text-muted-foreground text-center text-sm'>
+      <p className='text-daylight-ink-soft text-center text-sm'>
         Already have an account?{' '}
-        <Link href='/login' className='text-foreground font-medium underline underline-offset-4'>
+        <Link href='/login' className='text-daylight-ink font-bold underline underline-offset-4'>
           Sign in
         </Link>
       </p>
