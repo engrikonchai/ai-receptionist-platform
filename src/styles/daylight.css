@@ -1,0 +1,146 @@
+/**
+ * Daylight — the approved public marketing design system, scoped
+ * entirely to `.daylight-marketing` (applied once, on
+ * src/app/(marketing)/layout.tsx's root element). See
+ * docs/daylight-design-system.md for the full rationale.
+ *
+ * CRITICAL SCOPING RULE: every custom property below lives under the
+ * `.daylight-marketing` selector, never `:root` or `[data-theme='zen']`
+ * — the dashboard's existing shadcn tokens (--background, --primary,
+ * --border, etc. in src/styles/themes/zen.css) are never touched. The
+ * `@theme inline` block generates real Tailwind utility classes
+ * (`bg-daylight-indigo`, `text-daylight-ink`, `font-daylight-serif`, …)
+ * the same way zen.css generates `bg-primary`/`font-sans`/etc. — those
+ * classes exist globally, like any Tailwind utility, but only resolve
+ * to a real value where `.daylight-marketing` is an ancestor, so using
+ * one outside the marketing layout renders nothing (a visible signal
+ * during development, never a silent leak into dashboard markup).
+ *
+ * Values are copied verbatim from the approved Daylight design files
+ * (Handoff.dc.html's own "COLOR TOKENS" / "TYPE" / "SPACING, RADII &
+ * SHADOW" tables), not invented. Raw hex values live only here — every
+ * component consumes them through the generated utility classes below,
+ * never a scattered inline hex.
+ */
+.daylight-marketing {
+  /* ---- Core semantic tokens (Handoff.dc.html "COLOR TOKENS") ---- */
+  --daylight-ink: #1b1f3b;
+  --daylight-ink-soft: #4a5170;
+  --daylight-muted: #8a90ae;
+  --daylight-indigo: #4b57c9;
+  --daylight-indigo-hover: #3e49ae;
+  --daylight-indigo-tint: #eff1fa;
+  --daylight-indigo-tint-2: #c9ceec;
+  --daylight-border: #e8ebf7;
+  --daylight-surface: #ffffff;
+  --daylight-surface-muted: #f6f7fc;
+  --daylight-canvas: #eff1fa;
+  --daylight-success: #0f7a55;
+  --daylight-success-tint: #eaf7ef;
+  --daylight-warning: #8a5800;
+  --daylight-warning-tint: #fdf2dc;
+  --daylight-danger: #c2410c;
+  --daylight-danger-tint: #fff0ea;
+  --daylight-focus: #aab2e4;
+  /* Muted/emphasis text specifically for content sitting ON a solid
+     --daylight-indigo background (the widget-preview header, the final
+     CTA band) — distinct from the on-navy tones below, which are for
+     the darker --daylight-navy* panels instead. */
+  --daylight-on-indigo-muted: #d3d8f6;
+  --daylight-on-indigo-emphasis: #333d95;
+
+  /*
+   * Decorative dark "billboard" panel colors — the Trust & control
+   * section, final CTA's indigo band, the footer, and the mobile nav
+   * overlay (Landing Page.dc.html). Not part of Handoff.dc.html's core
+   * semantic table; named separately since they're specific to these
+   * high-contrast section moments, not general-purpose UI tokens.
+   */
+  --daylight-navy: #232a63;
+  --daylight-navy-panel: #2c3474;
+  --daylight-navy-deep: #12152b;
+  --daylight-on-navy: #ffffff;
+  --daylight-on-navy-body: #c9ceec;
+  --daylight-on-navy-muted: #aab2e4;
+  --daylight-on-navy-faint: #6b7192;
+  --daylight-on-navy-eyebrow: #8b95da;
+
+  /* ---- Radii (Handoff.dc.html "SPACING, RADII & SHADOW") ---- */
+  --daylight-radius-icon: 8px;
+  --daylight-radius-control: 12px;
+  --daylight-radius-card-sm: 16px;
+  --daylight-radius-card: 22px;
+  --daylight-radius-button: 14px;
+
+  /* ---- Shadow ---- */
+  --daylight-shadow-sm: 0 2px 8px rgba(27, 31, 59, 0.05);
+  --daylight-shadow-md: 0 10px 30px rgba(27, 31, 59, 0.06);
+  --daylight-shadow-lg: 0 18px 50px rgba(27, 31, 59, 0.12);
+  --daylight-shadow-button: 0 12px 30px rgba(75, 87, 201, 0.26);
+
+  @theme inline {
+    --color-daylight-ink: var(--daylight-ink);
+    --color-daylight-ink-soft: var(--daylight-ink-soft);
+    --color-daylight-muted: var(--daylight-muted);
+    --color-daylight-indigo: var(--daylight-indigo);
+    --color-daylight-indigo-hover: var(--daylight-indigo-hover);
+    --color-daylight-indigo-tint: var(--daylight-indigo-tint);
+    --color-daylight-indigo-tint-2: var(--daylight-indigo-tint-2);
+    --color-daylight-border: var(--daylight-border);
+    --color-daylight-surface: var(--daylight-surface);
+    --color-daylight-surface-muted: var(--daylight-surface-muted);
+    --color-daylight-canvas: var(--daylight-canvas);
+    --color-daylight-success: var(--daylight-success);
+    --color-daylight-success-tint: var(--daylight-success-tint);
+    --color-daylight-warning: var(--daylight-warning);
+    --color-daylight-warning-tint: var(--daylight-warning-tint);
+    --color-daylight-danger: var(--daylight-danger);
+    --color-daylight-danger-tint: var(--daylight-danger-tint);
+    --color-daylight-focus: var(--daylight-focus);
+    --color-daylight-on-indigo-muted: var(--daylight-on-indigo-muted);
+    --color-daylight-on-indigo-emphasis: var(--daylight-on-indigo-emphasis);
+    --color-daylight-navy: var(--daylight-navy);
+    --color-daylight-navy-panel: var(--daylight-navy-panel);
+    --color-daylight-navy-deep: var(--daylight-navy-deep);
+    --color-daylight-on-navy: var(--daylight-on-navy);
+    --color-daylight-on-navy-body: var(--daylight-on-navy-body);
+    --color-daylight-on-navy-muted: var(--daylight-on-navy-muted);
+    --color-daylight-on-navy-faint: var(--daylight-on-navy-faint);
+    --color-daylight-on-navy-eyebrow: var(--daylight-on-navy-eyebrow);
+
+    --font-daylight-sans: var(--font-manrope), sans-serif;
+    --font-daylight-serif: var(--font-libre-baskerville), serif;
+
+    --radius-daylight-icon: var(--daylight-radius-icon);
+    --radius-daylight-control: var(--daylight-radius-control);
+    --radius-daylight-card-sm: var(--daylight-radius-card-sm);
+    --radius-daylight-card: var(--daylight-radius-card);
+    --radius-daylight-button: var(--daylight-radius-button);
+
+    --shadow-daylight-sm: var(--daylight-shadow-sm);
+    --shadow-daylight-md: var(--daylight-shadow-md);
+    --shadow-daylight-lg: var(--daylight-shadow-lg);
+    --shadow-daylight-button: var(--daylight-shadow-button);
+  }
+
+  background-color: var(--daylight-canvas);
+  color: var(--daylight-ink);
+  font-family: var(--font-daylight-sans);
+  /* Light-only by design — "Daylight" is a bright, canvas-based public
+     system regardless of the visitor's OS/browser dark-mode preference
+     or the dashboard's own (separate, unaffected) dark mode. See
+     docs/daylight-design-system.md. */
+  color-scheme: light;
+}
+
+/* The mobile nav's only real motion is the Sheet primitive's own
+   slide/fade transition (src/components/ui/sheet.tsx, built on Base
+   UI's Dialog) — every other marketing interaction (hover/focus color
+   changes) is a static color swap, not motion. Scoped to the marketing
+   subtree only, matching this file's own scoping rule. */
+@media (prefers-reduced-motion: reduce) {
+  .daylight-marketing [data-slot='sheet-overlay'],
+  .daylight-marketing [data-slot='sheet-content'] {
+    transition-duration: 0.01ms !important;
+  }
+}

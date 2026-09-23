@@ -41,13 +41,22 @@ function SheetContent({
   children,
   side = 'right',
   showCloseButton = true,
+  container,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: 'top' | 'right' | 'bottom' | 'left';
   showCloseButton?: boolean;
+  /**
+   * Portal target override — defaults to `document.body` (Base UI's
+   * own default) when omitted. Needed by any caller whose styling
+   * depends on a scoped ancestor class the default target sits outside
+   * of (e.g. the Daylight marketing system's mobile nav — see
+   * src/features/marketing/components/mobile-nav.tsx).
+   */
+  container?: SheetPrimitive.Portal.Props['container'];
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal container={container}>
       <SheetOverlay />
       <SheetPrimitive.Popup
         data-slot='sheet-content'

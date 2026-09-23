@@ -11,6 +11,11 @@
 
 @import './theme.css';
 
+/* Scoped to `.daylight-marketing` only — see that file's own header
+   comment. Never touches the dashboard's [data-theme='zen'] tokens
+   above. */
+@import './daylight.css';
+
 @layer base {
   * {
     @apply border-border outline-ring/50;
