@@ -2,15 +2,16 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { FieldGroup } from '@/components/ui/field';
-import { Icons } from '@/components/icons';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { getSiteUrl } from '@/lib/site-url';
 import { PASSWORD_RESET_EMAIL_SENT_MESSAGE } from '../messages';
 import { forgotPasswordSchema } from '../schemas/auth';
-import { SupabaseConfigNotice } from './supabase-config-notice';
+import { DaylightConfigNotice } from './daylight/daylight-config-notice';
+import { DaylightFormMessage } from './daylight/daylight-form-message';
+import { DaylightSubmitButton } from './daylight/daylight-submit-button';
+import { DaylightTextField } from './daylight/daylight-text-field';
 
 export function ForgotPasswordForm() {
   const [submitted, setSubmitted] = useState(false);
@@ -40,19 +41,18 @@ export function ForgotPasswordForm() {
   });
 
   if (!isSupabaseConfigured()) {
-    return <SupabaseConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
+    return <DaylightConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
   }
 
   if (submitted) {
     return (
-      <div className='space-y-4'>
-        <div role='status' className='flex items-start gap-2.5 text-sm'>
-          <Icons.info className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
-          <p className='text-foreground'>{PASSWORD_RESET_EMAIL_SENT_MESSAGE}</p>
-        </div>
+      <div className='flex flex-col gap-5'>
+        <DaylightFormMessage variant='info'>
+          {PASSWORD_RESET_EMAIL_SENT_MESSAGE}
+        </DaylightFormMessage>
         <Link
           href='/login'
-          className='text-foreground block text-center text-sm font-medium underline underline-offset-4'
+          className='text-daylight-ink block text-center text-sm font-bold underline underline-offset-4'
         >
           Back to sign in
         </Link>
@@ -61,36 +61,35 @@ export function ForgotPasswordForm() {
   }
 
   return (
-    <div className='space-y-4'>
+    <div className='flex flex-col gap-5'>
       <form
         noValidate
         onSubmit={(e) => {
           e.preventDefault();
           form.handleSubmit();
         }}
+        className='flex flex-col gap-5'
       >
-        <FieldGroup>
-          <form.AppField
-            name='email'
-            children={(field) => (
-              <field.TextField
-                label='Email'
-                type='email'
-                autoComplete='email'
-                placeholder='you@example.com'
-                required
-              />
-            )}
-          />
-          <form.AppForm>
-            <form.SubmitButton className='w-full'>Send reset link</form.SubmitButton>
-          </form.AppForm>
-        </FieldGroup>
+        <form.AppField
+          name='email'
+          children={() => (
+            <DaylightTextField
+              label='Email'
+              type='email'
+              autoComplete='email'
+              placeholder='you@example.com'
+              required
+            />
+          )}
+        />
+        <form.AppForm>
+          <DaylightSubmitButton>Send reset link</DaylightSubmitButton>
+        </form.AppForm>
       </form>
 
-      <p className='text-muted-foreground text-center text-sm'>
+      <p className='text-daylight-ink-soft text-center text-sm'>
         Remembered your password?{' '}
-        <Link href='/login' className='text-foreground font-medium underline underline-offset-4'>
+        <Link href='/login' className='text-daylight-ink font-bold underline underline-offset-4'>
           Sign in
         </Link>
       </p>

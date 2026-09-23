@@ -1,22 +1,39 @@
+import Link from 'next/link';
 import { Icons } from '@/components/icons';
-import { Card, CardContent } from '@/components/ui/card';
-import { ThemeModeToggle } from '@/components/themes/theme-mode-toggle';
 
+/**
+ * The Daylight-scoped chrome around the onboarding wizard — the
+ * "calmer internal side" of the Daylight system bridging the
+ * expressive public entry (landing/auth) into the dashboard's own
+ * established visual language. Only this outer shell (canvas, header,
+ * card surface) is restyled; `OnboardingFlow`'s internal step fields
+ * keep the shared shadcn/zen-themed field components exactly as they
+ * are, so the wizard's own logic, validation and mutations are
+ * untouched — see docs/daylight-design-system.md "Onboarding" section.
+ *
+ * Not used anywhere else — safe to restyle directly, unlike
+ * `AuthShell`/`AccountRecovery`, which are also rendered inside the
+ * authenticated dashboard layout.
+ */
 export function OnboardingShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className='bg-background flex min-h-svh flex-col'>
-      <header className='flex items-center justify-between p-4'>
-        <div className='text-foreground flex items-center gap-2 text-sm font-semibold'>
-          <Icons.logo className='size-5' aria-hidden='true' />
-          Platform
+    <div className='daylight-marketing flex min-h-svh flex-col'>
+      <header className='border-daylight-border/70 border-b bg-white'>
+        <div className='mx-auto flex max-w-3xl items-center px-5 py-4 sm:px-8'>
+          <Link
+            href='/'
+            className='text-daylight-ink-soft hover:text-daylight-ink focus-visible:outline-daylight-focus inline-flex items-center gap-2 rounded-daylight-control text-sm font-bold focus-visible:outline-2 focus-visible:outline-offset-4'
+          >
+            <Icons.logo className='text-daylight-indigo size-5' aria-hidden='true' />
+            Platform
+          </Link>
         </div>
-        <ThemeModeToggle />
       </header>
 
-      <main className='flex flex-1 items-start justify-center p-4 pb-16 sm:items-center'>
-        <Card className='w-full max-w-xl'>
-          <CardContent className='pt-6'>{children}</CardContent>
-        </Card>
+      <main className='flex flex-1 items-start justify-center px-5 py-8 sm:items-center sm:px-8 sm:py-14'>
+        <div className='rounded-daylight-card shadow-daylight-sm w-full max-w-xl bg-white p-6 sm:p-9'>
+          {children}
+        </div>
       </main>
     </div>
   );

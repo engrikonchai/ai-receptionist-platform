@@ -1,15 +1,16 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useState } from 'react';
-import { FieldGroup } from '@/components/ui/field';
-import { Icons } from '@/components/icons';
+import { useEffect, useRef, useState } from 'react';
 import { useAppForm } from '@/lib/form';
 import { createSupabaseBrowserClient } from '@/lib/supabase/client';
 import { isSupabaseConfigured, SUPABASE_MISSING_ENV_MESSAGE } from '@/lib/supabase/env';
 import { resetPasswordSchema } from '../schemas/auth';
-import { SupabaseConfigNotice } from './supabase-config-notice';
-import { ResetPasswordInvalidLink } from './reset-password-invalid-link';
+import { DaylightConfigNotice } from './daylight/daylight-config-notice';
+import { DaylightFormMessage } from './daylight/daylight-form-message';
+import { DaylightInvalidLink } from './daylight/daylight-invalid-link';
+import { DaylightPasswordField } from './daylight/daylight-password-field';
+import { DaylightSubmitButton } from './daylight/daylight-submit-button';
 
 const GENERIC_UPDATE_ERROR = 'We could not update your password. Please try again.';
 
@@ -41,6 +42,11 @@ export function ResetPasswordForm() {
   const [formError, setFormError] = useState<string | null>(null);
   const [sessionExpired, setSessionExpired] = useState(false);
   const [success, setSuccess] = useState(false);
+  const errorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (formError) errorRef.current?.focus();
+  }, [formError]);
 
   const form = useAppForm({
     defaultValues: { password: '', confirmPassword: '' },
@@ -74,19 +80,18 @@ export function ResetPasswordForm() {
   });
 
   if (!isSupabaseConfigured()) {
-    return <SupabaseConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
+    return <DaylightConfigNotice message={SUPABASE_MISSING_ENV_MESSAGE} />;
   }
 
   if (sessionExpired) {
-    return <ResetPasswordInvalidLink />;
+    return <DaylightInvalidLink />;
   }
 
   if (success) {
     return (
-      <div role='status' className='flex items-start gap-2.5 text-sm'>
-        <Icons.circleCheck className='text-primary mt-0.5 size-4 shrink-0' aria-hidden='true' />
-        <p className='text-foreground'>Password updated. Redirecting you to sign in…</p>
-      </div>
+      <DaylightFormMessage variant='success'>
+        Password updated. Redirecting you to sign in…
+      </DaylightFormMessage>
     );
   }
 
@@ -97,38 +102,39 @@ export function ResetPasswordForm() {
         e.preventDefault();
         form.handleSubmit();
       }}
+      className='flex flex-col gap-5'
     >
-      <FieldGroup>
-        <form.AppField
-          name='password'
-          children={(field) => (
-            <field.PasswordField
-              label='New password'
-              autoComplete='new-password'
-              description='At least 8 characters.'
-              required
-            />
-          )}
-        />
-        <form.AppField
-          name='confirmPassword'
-          children={(field) => (
-            <field.PasswordField
-              label='Confirm new password'
-              autoComplete='new-password'
-              required
-            />
-          )}
-        />
-        {formError && (
-          <p role='alert' className='text-destructive text-sm'>
-            {formError}
-          </p>
+      <form.AppField
+        name='password'
+        children={() => (
+          <DaylightPasswordField
+            label='New password'
+            autoComplete='new-password'
+            description='At least 8 characters.'
+            required
+          />
         )}
-        <form.AppForm>
-          <form.SubmitButton className='w-full'>Update password</form.SubmitButton>
-        </form.AppForm>
-      </FieldGroup>
+      />
+      <form.AppField
+        name='confirmPassword'
+        children={() => (
+          <DaylightPasswordField
+            label='Confirm new password'
+            autoComplete='new-password'
+            required
+          />
+        )}
+      />
+
+      {formError && (
+        <DaylightFormMessage ref={errorRef} variant='error'>
+          {formError}
+        </DaylightFormMessage>
+      )}
+
+      <form.AppForm>
+        <DaylightSubmitButton>Update password</DaylightSubmitButton>
+      </form.AppForm>
     </form>
   );
 }
