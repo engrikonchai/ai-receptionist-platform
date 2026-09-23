@@ -14,11 +14,17 @@ import { Icons } from '@/components/icons';
  * Not used anywhere else — safe to restyle directly, unlike
  * `AuthShell`/`AccountRecovery`, which are also rendered inside the
  * authenticated dashboard layout.
+ *
+ * Carries the same `daylight-auth-scope` marker as `DaylightAuthShell`
+ * so it picks up the same restrained auth-only dark theme (see
+ * daylight.css and docs/daylight-design-system.md) when the visitor has
+ * dark mode on — never the landing page or /demo, which don't carry
+ * this marker.
  */
 export function OnboardingShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className='daylight-marketing flex min-h-svh flex-col'>
-      <header className='border-daylight-border/70 border-b bg-white'>
+    <div className='daylight-marketing daylight-auth-scope flex min-h-svh flex-col'>
+      <header className='border-daylight-border/70 bg-daylight-surface border-b'>
         <div className='mx-auto flex max-w-3xl items-center px-5 py-4 sm:px-8'>
           <Link
             href='/'
@@ -31,7 +37,7 @@ export function OnboardingShell({ children }: { children: React.ReactNode }) {
       </header>
 
       <main className='flex flex-1 items-start justify-center px-5 py-8 sm:items-center sm:px-8 sm:py-14'>
-        <div className='rounded-daylight-card shadow-daylight-sm w-full max-w-xl bg-white p-6 sm:p-9'>
+        <div className='rounded-daylight-card shadow-daylight-sm bg-daylight-surface w-full max-w-xl p-6 sm:p-9'>
           {children}
         </div>
       </main>

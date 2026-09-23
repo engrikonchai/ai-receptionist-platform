@@ -419,6 +419,56 @@ what it always actually existed to protect — that the real forms render and
 work — and the dashboard itself (verified via its still-enforced signed-out
 redirect, unchanged) is never touched by any Daylight class.
 
+### Auth dark theme
+
+A follow-up to the initial (light-only) Milestone 3 work: `DaylightAuthShell`
+renders a real `<ThemeModeToggle/>` (parity with the original `AuthShell`),
+but every Daylight token is a fixed hex value, so toggling it used to be a
+visual no-op — functionally real, but not what "a real, working toggle"
+should feel like. This adds a restrained, auth-only dark variant instead of
+hiding the toggle.
+
+- **Scope.** A second marker class, `daylight-auth-scope`, sits alongside
+  `daylight-marketing` on `DaylightAuthShell` and `OnboardingShell` only.
+  `src/styles/daylight.css`'s dark overrides are keyed off
+  `.dark .daylight-marketing.daylight-auth-scope` — two classes, both
+  required — so the landing page and `/demo` (which carry only
+  `daylight-marketing`) are structurally unable to pick up this block, even
+  when the visitor's global theme preference is already dark (verified by
+  `e2e/auth-dark-theme.spec.ts`'s "public landing page never picks up the
+  auth-only dark styling" test). `zen.css`, `[data-theme='zen']`, and
+  `:root` are untouched, same as every other rule in this file.
+- **Palette.** Reuses the already-approved dark "billboard" navy family
+  (`--daylight-navy`/`-panel`/`-deep`) — already used by the landing page's
+  Trust/footer/final-CTA sections and by `DaylightAuthVisual`'s always-dark
+  supporting panel — as the dark canvas/surface, so the whole page reads as
+  a natural extension of that panel rather than a new, disconnected dark
+  design. Semantic ink/border/status tokens get restrained, contrast-checked
+  dark-calibrated values (e.g. `--daylight-danger: #FF8A65`, a warm coral —
+  not the light-mode burnt-orange value, which reads muddy on a dark
+  background). `--daylight-indigo`/`-indigo-hover` are deliberately **not**
+  overridden: white-on-indigo already contrasts at roughly 6:1 and reads
+  even richer against a dark navy canvas, so the primary button/link color
+  is identical in both modes. The canvas is a dark navy
+  (`--daylight-navy-deep`, `#12152B`), never pure black — calm, not the old
+  dense auth design.
+- **`bg-white` → `bg-daylight-surface`.** The auth/onboarding header bars,
+  the onboarding card, and the text/password input backgrounds previously
+  used a hardcoded `bg-white` (invisible to any token override). Swapped for
+  the `--daylight-surface` token (`#FFFFFF` in light, `#1A2050` in dark) so
+  they participate in the theme instead of staying a fixed white patch on a
+  dark page.
+- **One deliberate non-change:** `DaylightAuthVisual`'s small chat-bubble
+  mockup card keeps literal light colors (`bg-[#F6F7FC]`/`text-[#1B1F3B]`),
+  not the `daylight-surface-muted`/`daylight-ink` tokens. It's a fixed
+  screenshot of the real, always-light customer-facing widget UI, not part
+  of the auth page's own theme — it must look identical regardless of
+  whether the business owner is viewing the page in light or dark mode.
+- **Persistence/behavior.** No changes to `next-themes`, the `ThemeProvider`
+  config in `src/app/layout.tsx`, or the `active_theme`/theme cookie —
+  the auth pages read and write the exact same global theme preference as
+  the rest of the app.
+
 ### Onboarding
 
 `OnboardingShell` (`src/features/onboarding/components/onboarding-shell.tsx`)

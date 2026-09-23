@@ -25,4 +25,27 @@ describe('DaylightAuthShell', () => {
 
     expect(screen.getByRole('link', { name: /Back to Platform/ })).toHaveAttribute('href', '/');
   });
+
+  it('renders a real, keyboard-reachable theme toggle button', () => {
+    render(
+      <DaylightAuthShell title='Sign in' description='desc'>
+        <div />
+      </DaylightAuthShell>
+    );
+
+    const toggle = screen.getByRole('button', { name: 'Toggle theme' });
+    expect(toggle).toBeInTheDocument();
+    expect(toggle).not.toHaveAttribute('tabindex', '-1');
+    expect(toggle).not.toBeDisabled();
+  });
+
+  it('carries the daylight-auth-scope marker the auth-only dark theme CSS targets', () => {
+    const { container } = render(
+      <DaylightAuthShell title='Sign in' description='desc'>
+        <div />
+      </DaylightAuthShell>
+    );
+
+    expect(container.querySelector('.daylight-marketing.daylight-auth-scope')).not.toBeNull();
+  });
 });

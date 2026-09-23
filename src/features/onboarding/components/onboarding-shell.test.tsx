@@ -14,4 +14,14 @@ describe('OnboardingShell', () => {
     expect(screen.getByRole('link', { name: /Platform/ })).toHaveAttribute('href', '/');
     expect(screen.getByText('wizard step goes here')).toBeInTheDocument();
   });
+
+  it('carries the daylight-auth-scope marker the auth-only dark theme CSS targets', () => {
+    const { container } = render(
+      <OnboardingShell>
+        <p>wizard step goes here</p>
+      </OnboardingShell>
+    );
+
+    expect(container.querySelector('.daylight-marketing.daylight-auth-scope')).not.toBeNull();
+  });
 });

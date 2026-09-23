@@ -16,6 +16,12 @@ import { DaylightAuthVisual } from './daylight-auth-visual';
  * expressive supporting visual. Mobile: the visual is hidden entirely
  * (`DaylightAuthVisual` is itself `hidden lg:flex`) so the form is the
  * very first thing a phone visitor sees, no scrolling required.
+ *
+ * The `daylight-auth-scope` marker class (alongside `daylight-marketing`)
+ * is what `.dark .daylight-marketing.daylight-auth-scope` in
+ * daylight.css targets for the auth-only dark theme — the landing page
+ * and /demo only carry `daylight-marketing` and stay light-only. See
+ * docs/daylight-design-system.md "Auth dark theme" section.
  */
 export function DaylightAuthShell({
   title,
@@ -27,8 +33,8 @@ export function DaylightAuthShell({
   children: React.ReactNode;
 }) {
   return (
-    <div className='daylight-marketing flex min-h-svh flex-col'>
-      <header className='border-daylight-border/70 border-b bg-white'>
+    <div className='daylight-marketing daylight-auth-scope flex min-h-svh flex-col'>
+      <header className='border-daylight-border/70 bg-daylight-surface border-b'>
         <div className='mx-auto flex max-w-6xl items-center justify-between px-5 py-4 sm:px-8'>
           <Link
             href='/'

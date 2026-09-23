@@ -48,7 +48,7 @@ export function DaylightTextField({
         aria-invalid={isInvalid}
         aria-describedby={cn(descriptionId, isInvalid && errorId).trim() || undefined}
         className={cn(
-          'border-daylight-input-border text-daylight-ink placeholder:text-daylight-muted min-h-12 rounded-daylight-control focus-visible:border-daylight-indigo focus-visible:outline-daylight-on-indigo-muted border-1.5 bg-white px-4 py-3 text-[15px] outline-none transition-colors focus-visible:outline-3',
+          'border-daylight-input-border text-daylight-ink placeholder:text-daylight-muted bg-daylight-surface min-h-12 rounded-daylight-control focus-visible:border-daylight-indigo focus-visible:outline-daylight-on-indigo-muted border-1.5 px-4 py-3 text-[15px] outline-none transition-colors focus-visible:outline-3',
           isInvalid && 'border-daylight-danger bg-daylight-danger-tint',
           className
         )}

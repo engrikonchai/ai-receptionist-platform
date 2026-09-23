@@ -45,7 +45,12 @@ export function DaylightAuthVisual() {
         aria-hidden='true'
         className='rounded-daylight-card shadow-daylight-lg relative mt-10 flex max-w-sm flex-col gap-2.5 bg-white p-5'
       >
-        <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm bg-daylight-surface-muted text-daylight-ink px-4 py-2.5 text-sm leading-relaxed'>
+        {/* Deliberately literal (not `daylight-surface-muted`/`daylight-ink`):
+            this is a fixed screenshot of the real, always-light customer
+            widget UI, not part of the surrounding auth page's own theme —
+            it must look the same whether the business owner is viewing
+            this page in light or dark mode. */}
+        <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm bg-[#F6F7FC] px-4 py-2.5 text-sm leading-relaxed text-[#1B1F3B]'>
           Are you open on Saturdays?
         </p>
         <p className='bg-daylight-indigo rounded-tl-2xl rounded-tr-2xl rounded-br-sm rounded-bl-2xl px-4 py-2.5 text-sm leading-relaxed text-white ltr:ml-auto rtl:mr-auto'>
