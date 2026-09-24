@@ -64,9 +64,9 @@ test.describe('Daylight auth pages — dark theme', () => {
       .locator('.daylight-marketing')
       .first()
       .evaluate((el) => getComputedStyle(el).backgroundColor);
-    // The landing page's own (light-only) canvas token, unaffected by
+    // The landing page's own (light-only) paper background, unaffected by
     // the global dark preference set on the auth page moments ago.
-    expect(landingBg).toBe('rgb(239, 241, 250)');
+    expect(landingBg).toBe('rgb(251, 246, 238)');
   });
 
   test('toggling the theme does not change auth validation or submission behavior', async ({

@@ -22,6 +22,7 @@
   --lp-blue-soft: #dfe6f8;
   --lp-coral: #ef5b34;
   --lp-coral-soft: #ffe3d8;
+  --lp-coral-ink: #a63a14;
   --lp-sage: #dcead5;
   --lp-sage-ink: #2b5a37;
   --lp-sky: #dbeaf7;
@@ -47,6 +48,7 @@
     --color-lp-blue-soft: var(--lp-blue-soft);
     --color-lp-coral: var(--lp-coral);
     --color-lp-coral-soft: var(--lp-coral-soft);
+    --color-lp-coral-ink: var(--lp-coral-ink);
     --color-lp-sage: var(--lp-sage);
     --color-lp-sage-ink: var(--lp-sage-ink);
     --color-lp-sky: var(--lp-sky);
@@ -86,6 +88,11 @@
 .landing :focus-visible {
   outline: 2px solid var(--lp-focus);
   outline-offset: 3px;
+}
+
+/* The focus ring must stay visible on the solid-blue closing panel. */
+.landing .lp-on-blue :focus-visible {
+  outline-color: #ffffff;
 }
 
 @keyframes lp-rise {

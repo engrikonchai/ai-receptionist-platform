@@ -37,9 +37,9 @@ export function ControlSection() {
               and keeps the question for you. No guessing, no made-up prices.
             </p>
 
-            <dl className='mt-9 flex flex-col gap-5'>
+            <ul className='mt-9 flex flex-col gap-5'>
               {POINTS.map((point) => (
-                <div key={point.title} className='flex gap-4'>
+                <li key={point.title} className='flex gap-4'>
                   <span
                     aria-hidden='true'
                     className='bg-lp-blue mt-0.5 text-white flex size-6 shrink-0 items-center justify-center rounded-full'
@@ -47,14 +47,14 @@ export function ControlSection() {
                     <Icons.check className='size-3.5' strokeWidth={3.5} />
                   </span>
                   <div>
-                    <dt className='text-lp-ink text-[17px] font-extrabold'>{point.title}</dt>
-                    <dd className='text-lp-ink-soft mt-0.5 text-[15px] leading-relaxed'>
+                    <p className='text-lp-ink text-[17px] font-extrabold'>{point.title}</p>
+                    <p className='text-lp-ink-soft mt-0.5 text-[15px] leading-relaxed'>
                       {point.description}
-                    </dd>
+                    </p>
                   </div>
-                </div>
+                </li>
               ))}
-            </dl>
+            </ul>
           </div>
 
           <div

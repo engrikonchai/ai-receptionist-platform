@@ -10,13 +10,13 @@ export function FinalCtaSection() {
         />
         <div
           aria-hidden='true'
-          className='bg-white/10 absolute -right-20 -bottom-28 size-80 rounded-full'
+          className='bg-lp-blue-deep/30 absolute -right-20 -bottom-28 size-80 rounded-full'
         />
-        <div className='relative'>
+        <div className='lp-on-blue relative'>
           <h2 className='lp-display mx-auto max-w-3xl text-[38px] leading-[1.04] text-white font-semibold text-balance sm:text-[56px] lg:text-[64px]'>
             Give every visitor an answer.
           </h2>
-          <p className='text-white/85 mx-auto mt-5 max-w-lg text-[17px] leading-relaxed text-pretty'>
+          <p className='text-white mx-auto mt-5 max-w-lg text-[17px] leading-relaxed text-pretty'>
             Add what you know, paste one snippet into your site, and watch conversations arrive in
             your Inbox.
           </p>

@@ -109,7 +109,7 @@ export type InboxTone = 'lead' | 'handoff' | 'unanswered';
 
 const TONE: Record<InboxTone, { label: string; className: string }> = {
   lead: { label: 'Lead captured', className: 'bg-lp-sage text-lp-sage-ink' },
-  handoff: { label: 'Needs a person', className: 'bg-lp-coral-soft text-lp-coral' },
+  handoff: { label: 'Needs a person', className: 'bg-lp-coral-soft text-lp-coral-ink' },
   unanswered: { label: 'Unanswered question', className: 'bg-lp-blue-soft text-lp-blue-deep' }
 };
 

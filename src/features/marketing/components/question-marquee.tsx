@@ -10,12 +10,12 @@ const QUESTIONS: { text: string; tone: string }[] = [
   { text: 'Do you take new patients?', tone: 'bg-lp-sky text-lp-sky-ink' },
   { text: 'Can I return paint once it’s opened?', tone: 'bg-lp-blue-soft text-lp-blue-deep' },
   { text: 'What time do you close today?', tone: 'bg-lp-sage text-lp-sage-ink' },
-  { text: 'Do you have gluten-free options?', tone: 'bg-lp-coral-soft text-lp-coral' },
+  { text: 'Do you have gluten-free options?', tone: 'bg-lp-coral-soft text-lp-coral-ink' },
   { text: 'How much is a first consultation?', tone: 'bg-lp-lilac text-lp-lilac-ink' },
   { text: 'Where is my order?', tone: 'bg-lp-sky text-lp-sky-ink' },
   { text: 'Is there parking nearby?', tone: 'bg-lp-blue-soft text-lp-blue-deep' },
   { text: 'Can I speak to someone about my invoice?', tone: 'bg-lp-sage text-lp-sage-ink' },
-  { text: 'Do you deliver on weekends?', tone: 'bg-lp-coral-soft text-lp-coral' },
+  { text: 'Do you deliver on weekends?', tone: 'bg-lp-coral-soft text-lp-coral-ink' },
   { text: 'What’s your cancellation policy?', tone: 'bg-lp-lilac text-lp-lilac-ink' }
 ];
 
