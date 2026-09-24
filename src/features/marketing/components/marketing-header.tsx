@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Icons } from '@/components/icons';
 import { MarketingButton } from './marketing-button';
 import { MobileNav } from './mobile-nav';
+import { HeaderScrollState } from './header-scroll-state';
 import { NAV_LINKS } from './nav-links';
 
 /**
@@ -12,7 +13,11 @@ import { NAV_LINKS } from './nav-links';
  */
 export function MarketingHeader() {
   return (
-    <header className='border-daylight-border/70 sticky top-0 z-40 border-b bg-white/80 backdrop-blur-md'>
+    <header
+      id='marketing-header'
+      className='border-daylight-border/70 data-[scrolled=true]:border-daylight-border data-[scrolled=true]:shadow-daylight-sm sticky top-0 z-40 border-b bg-white/80 backdrop-blur-md transition-[border-color,box-shadow] duration-200 ease-out'
+    >
+      <HeaderScrollState />
       <div className='mx-auto flex max-w-7xl items-center gap-8 px-5 py-4 sm:px-8 lg:px-12'>
         <Link
           href='/'
@@ -27,7 +32,7 @@ export function MarketingHeader() {
             <a
               key={link.href}
               href={link.href}
-              className='text-daylight-ink-soft hover:text-daylight-ink focus-visible:outline-daylight-focus rounded-daylight-control text-[15px] font-medium focus-visible:outline-2 focus-visible:outline-offset-4'
+              className='text-daylight-ink-soft hover:text-daylight-ink focus-visible:outline-daylight-focus rounded-daylight-control transition-colors duration-150 ease-out text-[15px] font-medium focus-visible:outline-2 focus-visible:outline-offset-4'
             >
               {link.label}
             </a>
@@ -37,7 +42,7 @@ export function MarketingHeader() {
         <div className='ml-auto hidden items-center gap-5 md:flex'>
           <Link
             href='/login'
-            className='text-daylight-ink-soft hover:text-daylight-ink focus-visible:outline-daylight-focus rounded-daylight-control text-[15px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-4'
+            className='text-daylight-ink-soft hover:text-daylight-ink focus-visible:outline-daylight-focus rounded-daylight-control transition-colors duration-150 ease-out text-[15px] font-semibold focus-visible:outline-2 focus-visible:outline-offset-4'
           >
             Sign in
           </Link>

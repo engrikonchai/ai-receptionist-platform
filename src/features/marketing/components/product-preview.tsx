@@ -27,6 +27,11 @@ function StepBadge({ n, tone = 'light' }: { n: number; tone?: 'light' | 'solid' 
   );
 }
 
+/** Stagger index for the entrance animation (see `.daylight-step` in daylight.css). */
+function stepStyle(i: number) {
+  return { '--step': i } as React.CSSProperties;
+}
+
 export function ProductPreview() {
   return (
     <div
@@ -48,14 +53,14 @@ export function ProductPreview() {
         </div>
 
         <div className='flex flex-col gap-3 px-5 py-5'>
-          <div className='flex items-start gap-3'>
+          <div style={stepStyle(0)} className='daylight-step flex items-start gap-3'>
             <StepBadge n={2} />
             <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-sm rounded-bl-2xl bg-daylight-indigo px-4 py-2.5 text-sm leading-relaxed text-white ltr:ml-auto rtl:mr-auto'>
               Are you open on Saturdays?
             </p>
           </div>
 
-          <div className='flex items-start gap-3'>
+          <div style={stepStyle(1)} className='daylight-step flex items-start gap-3'>
             <StepBadge n={3} />
             <div className='flex max-w-90 flex-col gap-1.5'>
               <p className='bg-daylight-surface-muted text-daylight-ink rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm px-4 py-2.5 text-sm leading-relaxed'>
@@ -68,14 +73,14 @@ export function ProductPreview() {
             </div>
           </div>
 
-          <div className='flex items-start gap-3'>
+          <div style={stepStyle(2)} className='daylight-step flex items-start gap-3'>
             <span aria-hidden='true' className='size-5.5 shrink-0' />
             <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-sm rounded-bl-2xl bg-daylight-indigo px-4 py-2.5 text-sm leading-relaxed text-white ltr:ml-auto rtl:mr-auto'>
               Could someone send me a quote for a group of 12? I&apos;m Maya — maya.chen@mail.com
             </p>
           </div>
 
-          <div className='flex items-center gap-3'>
+          <div style={stepStyle(3)} className='daylight-step flex items-center gap-3'>
             <StepBadge n={4} />
             <p className='bg-daylight-success-tint text-daylight-success rounded-daylight-control flex flex-wrap items-center gap-2 px-3.5 py-2.5 text-[13px] font-semibold'>
               <span className='font-extrabold'>Lead captured</span>
@@ -83,7 +88,7 @@ export function ProductPreview() {
             </p>
           </div>
 
-          <div className='flex items-center gap-3'>
+          <div style={stepStyle(4)} className='daylight-step flex items-center gap-3'>
             <StepBadge n={5} />
             <p className='bg-daylight-surface-muted text-daylight-ink rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm px-4 py-2.5 text-sm leading-relaxed'>
               Thanks, Maya. I&apos;ve passed this to the team — a person will reply here shortly.
@@ -92,7 +97,10 @@ export function ProductPreview() {
         </div>
       </div>
 
-      <div className='rounded-daylight-card shadow-daylight-md flex items-start gap-3.5 bg-white p-5.5'>
+      <div
+        style={stepStyle(5)}
+        className='daylight-step rounded-daylight-card shadow-daylight-md flex items-start gap-3.5 bg-white p-5.5'
+      >
         <StepBadge n={6} tone='solid' />
         <div className='min-w-0 flex-1'>
           <div className='flex items-center gap-2.5'>

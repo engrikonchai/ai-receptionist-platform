@@ -14,7 +14,7 @@ import { cn } from '@/lib/utils';
  * `daylight-*` utility classes instead — see src/styles/daylight.css.
  */
 const marketingButtonVariants = cva(
-  'inline-flex min-h-11 items-center justify-center rounded-daylight-button px-7 py-4 text-[15px] font-bold whitespace-nowrap transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-daylight-focus',
+  'inline-flex min-h-11 items-center justify-center rounded-daylight-button px-7 py-4 text-[15px] font-bold whitespace-nowrap transition-[transform,background-color] duration-160 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-daylight-focus',
   {
     variants: {
       variant: {
