@@ -5,6 +5,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuBadge,
@@ -26,6 +27,7 @@ import * as React from 'react';
 import { Icons } from '@/components/icons';
 import { BusinessSwitcher } from '@/components/layout/business-switcher';
 import { OwnerMenu } from '@/components/layout/owner-menu';
+import { BrandMark } from '@/components/layout/brand-mark';
 import { cn } from '@/lib/utils';
 import type { BusinessRow, ProfileRow } from '@/lib/supabase/database.types';
 
@@ -53,7 +55,7 @@ function isNavItemActive(pathname: string, url: string) {
  * indigo text + tint fill + 3px inset left bar") — paired with the
  * existing bold/tint/color treatment `sidebarMenuButtonVariants` already
  * applies via `data-active`, never color alone. */
-const ACTIVE_NAV_INSET_BAR = 'shadow-[inset_3px_0_0_var(--sidebar-accent-foreground)]';
+const ACTIVE_NAV_INSET_BAR = '';
 
 export default function AppSidebar({
   ownerEmail,
@@ -112,23 +114,26 @@ export default function AppSidebar({
   }, [isMobile, setOpenMobile]);
 
   return (
-    <Sidebar collapsible='icon' container={portalContainer}>
+    <Sidebar
+      collapsible='icon'
+      container={portalContainer}
+      role='complementary'
+      aria-label='Workspace'
+    >
       <SidebarHeader>
         <Link
           href='/dashboard/overview'
           aria-label='Platform — go to Overview'
           className='focus-visible:outline-ring flex items-center gap-2.5 px-1 focus-visible:outline-2 focus-visible:outline-offset-2 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0'
         >
-          <span className='bg-sidebar-primary text-sidebar-primary-foreground flex size-6.5 shrink-0 items-center justify-center rounded-[9px]'>
-            <Icons.logo className='size-3.5' aria-hidden='true' />
-          </span>
-          <span className='text-foreground truncate text-[16px] font-extrabold tracking-[-0.01em] group-data-[collapsible=icon]:hidden'>
+          <BrandMark className='size-8' />
+          <span className='text-foreground truncate text-[17px] font-extrabold tracking-[-0.01em] group-data-[collapsible=icon]:hidden'>
             Platform
           </span>
         </Link>
         <BusinessSwitcher businesses={businesses} />
       </SidebarHeader>
-      <SidebarContent className='overflow-x-hidden'>
+      <SidebarContent className='overflow-x-hidden' role='navigation' aria-label='Sidebar'>
         {filteredGroups.map((group, groupIndex) => (
           <React.Fragment key={group.label || 'ungrouped'}>
             {/* Component Rules table shows a single 1px divider between
@@ -136,8 +141,15 @@ export default function AppSidebar({
                 (Team/Settings/Billing) — never a visible text label like
                 "Main"/"Workspace" — so the group boundary is marked with
                 a hairline instead of SidebarGroupLabel. */}
-            {groupIndex > 0 && <SidebarSeparator className='my-2' />}
-            <SidebarGroup className='gap-1 py-0'>
+            {groupIndex > 0 && (
+              <SidebarSeparator className='my-2 group-data-[collapsible=icon]:block' />
+            )}
+            <SidebarGroup className='gap-1 py-1'>
+              {group.label && (
+                <SidebarGroupLabel className='text-muted-foreground h-6 px-3 text-[11px] font-extrabold tracking-[0.12em] uppercase group-data-[collapsible=icon]:hidden'>
+                  {group.label}
+                </SidebarGroupLabel>
+              )}
               <SidebarMenu>
                 {group.items.map((item) => {
                   const Icon = item.icon ? Icons[item.icon] : Icons.logo;
@@ -212,6 +224,12 @@ export default function AppSidebar({
                       {NAV_BADGE_COUNT[item.title] &&
                         badgeCountByKind[NAV_BADGE_COUNT[item.title]] > 0 && (
                           <SidebarMenuBadge
+                            className={cn(
+                              'right-2 rounded-full px-1.5 text-[11px] font-extrabold',
+                              item.title === 'Inbox'
+                                ? 'bg-status-attention-soft text-status-attention'
+                                : 'bg-status-info-soft text-status-info'
+                            )}
                             aria-label={`${badgeCountByKind[NAV_BADGE_COUNT[item.title]]} ${
                               item.title === 'Inbox' ? 'pending handoffs' : 'new leads'
                             }`}

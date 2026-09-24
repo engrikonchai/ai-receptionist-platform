@@ -11,7 +11,7 @@ import { NavGroup } from '@/types';
  */
 export const navGroups: NavGroup[] = [
   {
-    label: 'Main',
+    label: 'Work',
     items: [
       {
         title: 'Overview',
@@ -36,7 +36,12 @@ export const navGroups: NavGroup[] = [
         shortcut: ['l', 'e'],
         isActive: false,
         items: []
-      },
+      }
+    ]
+  },
+  {
+    label: 'Assistant',
+    items: [
       {
         title: 'Knowledge',
         url: '/dashboard/knowledge',
@@ -54,18 +59,18 @@ export const navGroups: NavGroup[] = [
         items: []
       },
       {
-        title: 'Channels',
-        url: '/dashboard/channels',
-        icon: 'share',
-        shortcut: ['c', 'h'],
-        isActive: false,
-        items: []
-      },
-      {
         title: 'Widget',
         url: '/dashboard/widget',
         icon: 'code',
         shortcut: ['w', 'i'],
+        isActive: false,
+        items: []
+      },
+      {
+        title: 'Channels',
+        url: '/dashboard/channels',
+        icon: 'share',
+        shortcut: ['c', 'h'],
         isActive: false,
         items: []
       }

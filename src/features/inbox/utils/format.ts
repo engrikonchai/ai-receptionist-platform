@@ -77,3 +77,48 @@ export function formatTimestamp(iso: string): string {
   const day = date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
   return `${day} · ${time}`;
 }
+
+/**
+ * Compact "how long ago" for list rows: "now", "4m", "3h", "Yesterday",
+ * then a short date. Falls back to '' for an unparseable timestamp.
+ */
+export function formatRelativeShort(iso: string, nowMs: number = Date.now()): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const minutes = Math.floor((nowMs - date.getTime()) / 60_000);
+  if (minutes < 1) return 'now';
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  if (hours < 48) return 'Yesterday';
+  return date.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+}
+
+/**
+ * The one state an owner needs to scan a conversation by, derived from
+ * the fields the list already carries — never a new database value.
+ *
+ *  needs_you — the visitor asked for a person and nobody has picked it up
+ *  with_you  — the owner has taken over and is replying
+ *  ai        — the assistant is handling it
+ *  closed    — resolved
+ */
+export type ConversationAttention = 'needs_you' | 'with_you' | 'ai' | 'closed';
+
+export function conversationAttention(c: {
+  status: ConversationStatus;
+  humanTakeover: boolean;
+  handoffStatus: HandoffStatus | null;
+}): ConversationAttention {
+  if (c.status === 'closed') return 'closed';
+  if (c.humanTakeover) return 'with_you';
+  if (c.handoffStatus === 'new' || c.status === 'handed_off') return 'needs_you';
+  return 'ai';
+}
+
+export const ATTENTION_LABEL: Record<ConversationAttention, string> = {
+  needs_you: 'Needs you',
+  with_you: 'With you',
+  ai: 'AI handling',
+  closed: 'Closed'
+};

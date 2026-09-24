@@ -57,20 +57,18 @@ export default function PageContainer({
   const hasHeader = pageTitle || pageHeaderAction;
 
   return (
-    // Shell anatomy: "Canvas — #EFF1FA, 28px padding, 16px gutters." The
-    // 28px step only applies from md+ — at 390px a full 28px gutter on
-    // both sides would meaningfully narrow already-dense page content
-    // (tables, forms) that this milestone does not redesign, so mobile
-    // keeps a slightly tighter, still-breathing 20px.
-    <div className='flex flex-1 flex-col px-5 pt-4 pb-6 md:px-7 md:pt-7 md:pb-8'>
+    // One consistent page frame: a centered column (max ~1152px) with
+    // generous gutters, so every page lines up under the same title
+    // position and nothing stretches edge-to-edge on wide monitors.
+    <div className='mx-auto flex w-full max-w-6xl flex-1 flex-col px-4 pt-5 pb-[calc(5.5rem+env(safe-area-inset-bottom))] sm:px-6 md:pt-8 md:pb-10'>
       {hasHeader && (
-        <div className='mb-5 flex items-start justify-between gap-4'>
+        <div className='mb-6 flex flex-wrap items-start justify-between gap-x-4 gap-y-3 md:mb-8'>
           <Heading
             title={pageTitle ?? ''}
             description={pageDescription ?? ''}
             infoContent={infoContent}
           />
-          {pageHeaderAction && <div className='shrink-0'>{pageHeaderAction}</div>}
+          {pageHeaderAction && <div className='shrink-0 pt-1'>{pageHeaderAction}</div>}
         </div>
       )}
       {content}

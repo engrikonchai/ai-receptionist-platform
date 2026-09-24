@@ -82,10 +82,10 @@ export function Composer({
 
   if (!canSend) {
     return (
-      <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
+      <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4'>
         <div
           role='status'
-          className='bg-muted/50 text-muted-foreground flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs'
+          className='bg-secondary text-muted-foreground flex items-center gap-2.5 rounded-xl px-3.5 py-3 text-[13px] leading-snug'
         >
           <Icons.lock className='size-3.5 shrink-0' aria-hidden='true' />
           {disabledReason}
@@ -102,7 +102,7 @@ export function Composer({
         : null;
 
   return (
-    <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]'>
+    <div className='bg-card sticky bottom-0 border-t p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4'>
       {sendError && (
         <p role='alert' className='text-destructive mb-2 text-xs'>
           {sendError}
@@ -131,7 +131,7 @@ export function Composer({
               handleSend();
             }
           }}
-          placeholder={`Message ${conversationName} (Enter to send, Shift+Enter for a new line)`}
+          placeholder={`Reply to ${conversationName}…`}
           rows={2}
           maxLength={MESSAGE_MAX_LENGTH}
           disabled={isSending}

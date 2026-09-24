@@ -100,7 +100,7 @@ export function InstallSnippetCard({
               )}
             </Button>
           </div>
-          <pre className='bg-muted max-w-full overflow-x-auto rounded-md p-3 text-xs'>
+          <pre className='bg-muted max-w-full break-all whitespace-pre-wrap rounded-md p-3 text-xs'>
             <code>{snippet}</code>
           </pre>
         </div>
@@ -164,7 +164,7 @@ export function InstallSnippetCard({
               floating launcher? Dispatch this event from its click handler — no need to find or
               touch the widget&apos;s own elements.
             </p>
-            <pre className='bg-muted max-w-full overflow-x-auto rounded-md p-3 text-xs'>
+            <pre className='bg-muted max-w-full break-all whitespace-pre-wrap rounded-md p-3 text-xs'>
               <code>{buildOpenEventSnippet(publicWidgetId)}</code>
             </pre>
           </div>

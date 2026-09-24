@@ -1,6 +1,5 @@
 import { Icons } from '@/components/icons';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
+import { StatusPill } from '@/components/ui/status-pill';
 import { handoffStatusIndicatorLabel } from '../utils/format';
 import type { HandoffStatus } from '../api/types';
 
@@ -25,12 +24,12 @@ export function LeadHandoffBadge({
     status === 'new' ? Icons.warning : status === 'resolved' ? Icons.circleCheck : Icons.humanAgent;
 
   return (
-    <Badge
-      variant={isSettled ? 'outline' : status === 'new' ? 'destructive' : 'secondary'}
-      className={cn('gap-1', isSettled && 'text-muted-foreground', className)}
+    <StatusPill
+      tone={isSettled ? 'neutral' : status === 'new' ? 'attention' : 'info'}
+      className={className}
     >
       <Icon className='size-3' aria-hidden='true' />
       {label}
-    </Badge>
+    </StatusPill>
   );
 }

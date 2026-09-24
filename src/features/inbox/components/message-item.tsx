@@ -1,7 +1,4 @@
 import { Icons } from '@/components/icons';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Bubble, BubbleContent } from '@/components/ui/bubble';
-import { Message, MessageAvatar, MessageContent, MessageHeader } from '@/components/ui/message';
 import { cn } from '@/lib/utils';
 import { formatTimestamp } from '../utils/format';
 import type { ConversationMessage } from '../api/types';
@@ -12,21 +9,11 @@ function messageLabel(message: ConversationMessage): string {
   return message.senderType === 'human' ? 'Human operator' : 'AI Receptionist';
 }
 
-function RoleIcon({ message }: { message: ConversationMessage }) {
-  if (message.role === 'system') return <Icons.info className='size-3.5' aria-hidden='true' />;
-  if (message.role === 'assistant') {
-    return message.senderType === 'human' ? (
-      <Icons.humanAgent className='size-3.5' aria-hidden='true' />
-    ) : (
-      <Icons.aiAgent className='size-3.5' aria-hidden='true' />
-    );
-  }
-  return <Icons.user className='size-3.5' aria-hidden='true' />;
-}
-
-function bubbleVariant(message: ConversationMessage): 'default' | 'tinted' | 'muted' {
-  if (message.role !== 'assistant') return 'muted';
-  return message.senderType === 'human' ? 'default' : 'tinted';
+/** Time only — the thread already shows a day divider, so a full date here would repeat it. */
+function timeOnly(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 }
 
 export function MessageItem({ message }: { message: ConversationMessage }) {
@@ -42,32 +29,40 @@ export function MessageItem({ message }: { message: ConversationMessage }) {
     );
   }
 
-  const isOutgoing = message.role === 'assistant';
+  const isCustomer = message.role === 'user';
+  const isHuman = message.role === 'assistant' && message.senderType === 'human';
 
   return (
-    <Message align={isOutgoing ? 'end' : 'start'} className='items-end'>
-      <MessageAvatar>
-        <Avatar>
-          <AvatarFallback
-            className={cn(
-              'text-xs font-semibold',
-              isOutgoing ? 'bg-primary/15 text-primary' : 'bg-muted text-foreground'
-            )}
-          >
-            <RoleIcon message={message} />
-          </AvatarFallback>
-        </Avatar>
-      </MessageAvatar>
-      <MessageContent>
-        <MessageHeader className={cn('gap-1.5', isOutgoing && 'justify-end')}>
-          <span className='font-medium'>{messageLabel(message)}</span>
-          <span aria-hidden='true'>·</span>
-          <span>{formatTimestamp(message.createdAt)}</span>
-        </MessageHeader>
-        <Bubble variant={bubbleVariant(message)} align={isOutgoing ? 'end' : 'start'}>
-          <BubbleContent>{message.content}</BubbleContent>
-        </Bubble>
-      </MessageContent>
-    </Message>
+    <div className={cn('flex min-w-0 flex-col gap-1', isCustomer ? 'items-start' : 'items-end')}>
+      <div
+        className={cn(
+          'text-muted-foreground flex items-center gap-1.5 px-1 text-[11px] font-semibold',
+          !isCustomer && 'flex-row-reverse'
+        )}
+      >
+        {isCustomer ? (
+          <Icons.user className='size-3' aria-hidden='true' />
+        ) : isHuman ? (
+          <Icons.humanAgent className='size-3' aria-hidden='true' />
+        ) : (
+          <Icons.aiAgent className='size-3' aria-hidden='true' />
+        )}
+        <span>{messageLabel(message)}</span>
+        <span aria-hidden='true'>·</span>
+        <time dateTime={message.createdAt} suppressHydrationWarning className='tabular-nums'>
+          {timeOnly(message.createdAt)}
+        </time>
+      </div>
+      <p
+        className={cn(
+          'max-w-[88%] rounded-2xl px-3.5 py-2.5 text-[15px] leading-relaxed wrap-break-word whitespace-pre-wrap sm:max-w-[75%]',
+          isCustomer && 'bg-card text-foreground ring-border rounded-tl-md ring-1',
+          !isCustomer && !isHuman && 'bg-accent text-foreground rounded-tr-md',
+          isHuman && 'bg-primary text-primary-foreground rounded-tr-md'
+        )}
+      >
+        {message.content}
+      </p>
+    </div>
   );
 }

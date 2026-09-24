@@ -36,9 +36,11 @@ export function Breadcrumbs() {
               // the current-page crumb rather than a separate duplicate
               // title element, so nested routes still show their full
               // trail while a top-level route reads as a plain page title.
-              <BreadcrumbPage className='text-foreground min-w-0 truncate text-[20px] font-extrabold tracking-[-0.02em]'>
-                {item.title}
-              </BreadcrumbPage>
+              <BreadcrumbItem className='min-w-0'>
+                <BreadcrumbPage className='text-foreground min-w-0 truncate text-[20px] font-extrabold tracking-[-0.02em]'>
+                  {item.title}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
             )}
           </Fragment>
         ))}

@@ -56,7 +56,7 @@ export default async function SettingsPage() {
       pageTitle='Settings'
       pageDescription='Configure your business and platform settings.'
     >
-      <Card>
+      <Card className='max-w-2xl'>
         <CardHeader>
           <CardTitle>Business profile</CardTitle>
         </CardHeader>

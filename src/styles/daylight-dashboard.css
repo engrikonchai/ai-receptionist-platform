@@ -1,5 +1,11 @@
 /**
- * Daylight — dashboard shell scope (Milestone 4).
+ * Daylight — dashboard shell scope. Palette updated to the "Sunroom"
+ * direction approved on the landing page (warm paper canvas, muted blue
+ * `#4263C7` accent, warm-charcoal dark mode) — see the token blocks below.
+ * The mechanism described here (override the standard shadcn variables,
+ * scoped to `.daylight-dashboard`) is unchanged.
+ *
+ * Original note (Milestone 4):
  *
  * Scoped entirely to `.daylight-dashboard`, applied once, directly as
  * `className` on the `SidebarProvider` in `src/app/dashboard/layout.tsx`
@@ -39,100 +45,145 @@
  * color, `--secondary`/`--accent` dark fills, `--radius` — and the
  * reasoning behind each).
  */
+/* Purposeful status colors. Each pair is (text, tinted surface) and is
+   used through the `status-*` utilities generated below — never raw hex
+   in components. Meaning: attention = needs the owner now, success =
+   done/healthy, info = neutral-informational/in progress by the AI,
+   neutral = inactive/closed, danger = error/destructive. */
 .daylight-dashboard {
-  --background: #eff1fa;
-  --foreground: #1b1f3b;
+  --background: #f6f1e8;
+  --foreground: #1f1a15;
   --card: #ffffff;
-  --card-foreground: #1b1f3b;
+  --card-foreground: #1f1a15;
   --popover: #ffffff;
-  --popover-foreground: #1b1f3b;
-  --primary: #4b57c9;
+  --popover-foreground: #1f1a15;
+  --primary: #4263c7;
   --primary-foreground: #ffffff;
-  --secondary: #f6f7fc;
-  --secondary-foreground: #1b1f3b;
-  --muted: #f6f7fc;
-  --muted-foreground: #6b7192;
-  --accent: #eff1fa;
-  --accent-foreground: #333d95;
-  --destructive: #a82926;
+  --secondary: #efe8da;
+  --secondary-foreground: #1f1a15;
+  --muted: #efe8da;
+  --muted-foreground: #6a6055;
+  --accent: #e3e9f9;
+  --accent-foreground: #2f4a9e;
+  --destructive: #b42318;
   --destructive-foreground: #ffffff;
-  --border: #e8ebf7;
-  --input: #d8dcf1;
-  --ring: #4b57c9;
-  --chart-1: #4b57c9;
-  --chart-2: #c9ceec;
-  --chart-3: #0f7a55;
-  --chart-4: #8a5800;
-  --chart-5: #c2410c;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #4a5170;
-  --sidebar-primary: #4b57c9;
+  --border: #e6ddcc;
+  --input: #d6ccb8;
+  --ring: #4263c7;
+  --chart-1: #4263c7;
+  --chart-2: #b9c8f0;
+  --chart-3: #1e6b41;
+  --chart-4: #b45309;
+  --chart-5: #b42318;
+  --sidebar: #fbf7ef;
+  --sidebar-foreground: #564d43;
+  --sidebar-primary: #4263c7;
   --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #eff1fa;
-  --sidebar-accent-foreground: #4b57c9;
-  --sidebar-border: #e8ebf7;
-  --sidebar-ring: #4b57c9;
+  --sidebar-accent: #e3e9f9;
+  --sidebar-accent-foreground: #2f4a9e;
+  --sidebar-border: #e6ddcc;
+  --sidebar-ring: #4263c7;
 
-  /* Component Rules table: buttons 12–14px, cards 22px. Scaling the
-     single `--radius` primitive that `--radius-sm/md/lg/xl` all derive
-     from (see zen.css's own `@theme inline` block) to hit the button
-     target exactly (`rounded-lg` = `--radius` = 12px) lifts cards
-     (`rounded-xl` = `--radius + 4px` = 16px) most of the way there
-     without a full page-by-page pass to confirm every existing dense
-     table/form still reads well at the literal 22px the mockup shows on
-     spacious, mostly-empty screens — a deliberate, documented deviation.
-     See docs/daylight-design-system.md. */
+  --status-attention: #8f3a0e;
+  --status-attention-soft: #fce8d6;
+  --status-success: #1e6b41;
+  --status-success-soft: #dcf0e2;
+  --status-info: #2f4a9e;
+  --status-info-soft: #e3e9f9;
+  --status-neutral: #5a5147;
+  --status-neutral-soft: #ece4d4;
+  --status-danger: #a32a1f;
+  --status-danger-soft: #fbe2de;
+
+  /* Panels are 16px, controls 12px; tighter than the marketing page so
+     dense lists and forms still read as working surfaces. */
   --radius: 0.75rem;
 
-  /* Manrope, reusing the same font already loaded for the marketing
-     scope (`font.config.ts`) — no second font load. Set as a real
-     `font-family` (not just the custom property) so it actually
-     cascades to every descendant, the same pattern `daylight-marketing`
-     uses below. */
   --font-sans: var(--font-manrope), sans-serif;
+
+  @theme inline {
+    --color-status-attention: var(--status-attention);
+    --color-status-attention-soft: var(--status-attention-soft);
+    --color-status-success: var(--status-success);
+    --color-status-success-soft: var(--status-success-soft);
+    --color-status-info: var(--status-info);
+    --color-status-info-soft: var(--status-info-soft);
+    --color-status-neutral: var(--status-neutral);
+    --color-status-neutral-soft: var(--status-neutral-soft);
+    --color-status-danger: var(--status-danger);
+    --color-status-danger-soft: var(--status-danger-soft);
+  }
+
   background-color: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
 }
 
 .dark .daylight-dashboard {
-  --background: #12152b;
-  --foreground: #eef0fb;
-  --card: #1c2040;
-  --card-foreground: #eef0fb;
-  --popover: #1c2040;
-  --popover-foreground: #eef0fb;
-  /* Lifted two steps from the light indigo for 4.5:1 on the dark
-     surface (Design System.dc.html §09's own stated rule) — used
-     directly for text/icons/rings sitting on the dark canvas. A filled
-     button using this same light indigo needs a dark foreground
-     instead of white to keep its own text readable (white-on-#7C88E8
-     lands under 4.5:1) — see docs/daylight-design-system.md. */
-  --primary: #7c88e8;
-  --primary-foreground: #12152b;
-  --secondary: #1c2040;
-  --secondary-foreground: #eef0fb;
-  --muted: #1c2040;
-  --muted-foreground: #9aa0c6;
-  --accent: #242c57;
-  --accent-foreground: #b9c0e8;
-  --destructive: #f0724b;
-  --destructive-foreground: #12152b;
-  --border: #2a3060;
-  --input: #2a3060;
-  --ring: #7c88e8;
-  --chart-1: #7c88e8;
-  --chart-2: #3a3f7a;
-  --chart-3: #3fce93;
-  --chart-4: #f0b45e;
-  --chart-5: #f0724b;
-  --sidebar: #1c2040;
-  --sidebar-foreground: #9aa0c6;
-  --sidebar-primary: #7c88e8;
-  --sidebar-primary-foreground: #12152b;
-  --sidebar-accent: #242c57;
-  --sidebar-accent-foreground: #b9c0e8;
-  --sidebar-border: #2a3060;
-  --sidebar-ring: #7c88e8;
+  --background: #14110e;
+  --foreground: #f3ede3;
+  --card: #1e1a16;
+  --card-foreground: #f3ede3;
+  --popover: #221d18;
+  --popover-foreground: #f3ede3;
+  /* A lighter blue for 4.5:1+ on the dark surface; filled buttons pair
+     it with a dark foreground. */
+  --primary: #8aa3ee;
+  --primary-foreground: #101326;
+  --secondary: #28231d;
+  --secondary-foreground: #f3ede3;
+  --muted: #28231d;
+  --muted-foreground: #a99f91;
+  --accent: #242d4d;
+  --accent-foreground: #bccaf6;
+  --destructive: #f28b78;
+  --destructive-foreground: #1a0d0a;
+  --border: #332d25;
+  --input: #40382e;
+  --ring: #8aa3ee;
+  --chart-1: #8aa3ee;
+  --chart-2: #3a4a7c;
+  --chart-3: #7ed9a3;
+  --chart-4: #f0b27a;
+  --chart-5: #f28b78;
+  --sidebar: #191512;
+  --sidebar-foreground: #b3a99b;
+  --sidebar-primary: #8aa3ee;
+  --sidebar-primary-foreground: #101326;
+  --sidebar-accent: #242d4d;
+  --sidebar-accent-foreground: #bccaf6;
+  --sidebar-border: #332d25;
+  --sidebar-ring: #8aa3ee;
+
+  --status-attention: #f5b48c;
+  --status-attention-soft: #3a2517;
+  --status-success: #86dba9;
+  --status-success-soft: #16301f;
+  --status-info: #b3c3f5;
+  --status-info-soft: #1f2947;
+  --status-neutral: #c9beae;
+  --status-neutral-soft: #2c261f;
+  --status-danger: #f5a79d;
+  --status-danger-soft: #3b1e1a;
   color-scheme: dark;
+}
+
+/* Fraunces: page titles and large figures only (loaded in dashboard/layout.tsx). */
+.daylight-dashboard .font-display {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-optical-sizing: auto;
+  font-variation-settings: 'SOFT' 60;
+  letter-spacing: -0.02em;
+}
+
+/* Mobile: no sticky hover, no gray tap flash, no zoom on input focus. */
+.daylight-dashboard {
+  -webkit-tap-highlight-color: transparent;
+}
+@media (pointer: coarse) {
+  .daylight-dashboard input,
+  .daylight-dashboard textarea,
+  .daylight-dashboard select {
+    font-size: 16px;
+  }
 }

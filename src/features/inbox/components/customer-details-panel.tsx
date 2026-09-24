@@ -1,14 +1,13 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
+import * as React from 'react';
 import { Icons } from '@/components/icons';
-import { Badge } from '@/components/ui/badge';
+import { StatusPill } from '@/components/ui/status-pill';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Textarea } from '@/components/ui/textarea';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
 import {
@@ -22,22 +21,53 @@ import type { ConversationListItem } from '../api/types';
 
 const NOT_PROVIDED = 'Not provided';
 
+/** Renders an email/phone as a real link so the owner can act on it in one tap. */
+function ContactValue({ value }: { value: string }) {
+  const trimmed = value.trim();
+  if (!trimmed) return <span className='text-muted-foreground'>{NOT_PROVIDED}</span>;
+  const href = trimmed.includes('@')
+    ? `mailto:${trimmed}`
+    : /^[+\d][\d\s().-]{5,}$/.test(trimmed)
+      ? `tel:${trimmed.replace(/[^\d+]/g, '')}`
+      : null;
+  return href ? (
+    <a
+      href={href}
+      className='text-accent-foreground font-semibold underline-offset-4 hover:underline'
+    >
+      {trimmed}
+    </a>
+  ) : (
+    <span>{trimmed}</span>
+  );
+}
+
 function DetailRow({
-  icon: Icon,
   label,
-  value
+  value,
+  children
 }: {
-  icon: (typeof Icons)[keyof typeof Icons];
   label: string;
-  value: string;
+  value?: string;
+  children?: React.ReactNode;
 }) {
   return (
-    <div className='flex items-start gap-2.5 text-sm'>
-      <Icon className='text-muted-foreground mt-0.5 size-4 shrink-0' aria-hidden='true' />
-      <div className='min-w-0'>
-        <p className='text-muted-foreground text-xs'>{label}</p>
-        <p className='text-foreground wrap-break-word'>{value}</p>
-      </div>
+    <div className='grid grid-cols-[5.5rem_1fr] gap-x-3 text-sm'>
+      <dt className='text-muted-foreground pt-px text-xs font-semibold'>{label}</dt>
+      <dd className='text-foreground min-w-0 wrap-break-word'>
+        {children ?? value ?? NOT_PROVIDED}
+      </dd>
+    </div>
+  );
+}
+
+function SectionHeading({ title, children }: { title: string; children?: React.ReactNode }) {
+  return (
+    <div className='mb-3 flex items-center justify-between gap-2'>
+      <h3 className='text-muted-foreground text-[11px] font-extrabold tracking-[0.12em] uppercase'>
+        {title}
+      </h3>
+      {children}
     </div>
   );
 }
@@ -87,26 +117,40 @@ function LeadSection({
   }
 
   const { lead } = data;
+  const hasDates = Boolean(lead.checkIn || lead.checkOut);
 
   return (
-    <div className='space-y-3'>
-      <div className='flex items-center justify-between gap-2'>
-        <p className='text-foreground text-sm font-medium'>Lead</p>
-        <Badge variant='secondary'>{LEAD_STATUS_LABEL[lead.status]}</Badge>
-      </div>
-      <DetailRow icon={Icons.user} label='Name' value={lead.name.trim() || NOT_PROVIDED} />
-      <DetailRow icon={Icons.phone} label='Contact' value={lead.contact.trim() || NOT_PROVIDED} />
-      <DetailRow icon={Icons.calendar} label='Check-in' value={lead.checkIn ?? NOT_PROVIDED} />
-      <DetailRow icon={Icons.calendar} label='Check-out' value={lead.checkOut ?? NOT_PROVIDED} />
-      <DetailRow
-        icon={Icons.teams}
-        label='Guests'
-        value={lead.guestCount !== null ? String(lead.guestCount) : NOT_PROVIDED}
-      />
-      <DetailRow icon={Icons.pin} label='Source' value={CHANNEL_LABEL[lead.source]} />
-      <DetailRow icon={Icons.chat} label='Language' value={languageLabel(lead.language)} />
-      <DetailRow icon={Icons.edit} label='Note' value={lead.note?.trim() || NOT_PROVIDED} />
-    </div>
+    <section>
+      <SectionHeading title='Lead'>
+        <StatusPill
+          tone={
+            lead.status === 'new' ? 'attention' : lead.status === 'lost' ? 'neutral' : 'success'
+          }
+        >
+          {LEAD_STATUS_LABEL[lead.status]}
+        </StatusPill>
+      </SectionHeading>
+      <dl className='space-y-2.5'>
+        <DetailRow label='Name' value={lead.name.trim() || NOT_PROVIDED} />
+        <DetailRow label='Contact'>
+          <ContactValue value={lead.contact} />
+        </DetailRow>
+        {lead.note?.trim() && <DetailRow label='Note' value={lead.note.trim()} />}
+        {lead.guestCount !== null && (
+          <DetailRow label='Party size' value={String(lead.guestCount)} />
+        )}
+        {hasDates && (
+          <DetailRow
+            label='Dates'
+            value={[lead.checkIn, lead.checkOut].filter(Boolean).join(' → ')}
+          />
+        )}
+        <DetailRow
+          label='Source'
+          value={`${CHANNEL_LABEL[lead.source]} · ${languageLabel(lead.language)}`}
+        />
+      </dl>
+    </section>
   );
 }
 
@@ -138,31 +182,33 @@ function HandoffSection({
     handoff.status === 'resolved' || (handoff.status === 'contacted' && !humanTakeover);
 
   return (
-    <div className='space-y-3'>
-      <div className='flex items-center justify-between gap-2'>
-        <p className='text-foreground text-sm font-medium'>Handoff</p>
-        <Badge variant={isSettled ? 'outline' : 'destructive'}>
+    <section>
+      <SectionHeading title='Handoff'>
+        <StatusPill tone={isSettled ? 'neutral' : handoff.status === 'new' ? 'attention' : 'info'}>
           {handoffStatusIndicatorLabel(handoff.status, humanTakeover)}
-        </Badge>
-      </div>
-      <DetailRow
-        icon={Icons.user}
-        label='Customer name'
-        value={handoff.customerName?.trim() || NOT_PROVIDED}
-      />
-      <DetailRow
-        icon={Icons.phone}
-        label='Contact'
-        value={handoff.contact.trim() || NOT_PROVIDED}
-      />
-      <DetailRow
-        icon={Icons.chat}
-        label='Question'
-        value={handoff.question?.trim() || NOT_PROVIDED}
-      />
-      <DetailRow icon={Icons.info} label='Reason' value={handoff.reason?.trim() || NOT_PROVIDED} />
-    </div>
+        </StatusPill>
+      </SectionHeading>
+      {handoff.question?.trim() && (
+        <p className='bg-secondary text-foreground mb-3 rounded-xl px-3 py-2.5 text-sm leading-relaxed'>
+          &ldquo;{handoff.question.trim()}&rdquo;
+        </p>
+      )}
+      <dl className='space-y-2.5'>
+        <DetailRow label='Customer' value={handoff.customerName?.trim() || NOT_PROVIDED} />
+        <DetailRow label='Contact'>
+          <ContactValue value={handoff.contact} />
+        </DetailRow>
+        <DetailRow label='Reason' value={humanizeReason(handoff.reason)} />
+      </dl>
+    </section>
   );
+}
+
+function humanizeReason(reason: string | null): string {
+  const trimmed = reason?.trim();
+  if (!trimmed) return NOT_PROVIDED;
+  const text = trimmed.replace(/_/g, ' ');
+  return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
 export function CustomerDetailsContent({
@@ -173,17 +219,15 @@ export function CustomerDetailsContent({
   conversation: ConversationListItem;
 }) {
   return (
-    <div className='space-y-4 text-sm'>
+    <div className='space-y-6 text-sm'>
       <div>
-        <p className='text-foreground text-base font-semibold'>{conversation.displayName}</p>
-        <p className='text-muted-foreground text-xs'>{conversation.maskedVisitorId}</p>
+        <p className='text-foreground text-lg leading-tight font-bold'>
+          {conversation.displayName}
+        </p>
+        <p className='text-muted-foreground mt-0.5 text-xs'>{conversation.maskedVisitorId}</p>
       </div>
 
-      <Separator />
-
       <LeadSection businessId={businessId} conversationId={conversation.id} />
-
-      <Separator />
 
       <HandoffSection
         businessId={businessId}
@@ -191,29 +235,18 @@ export function CustomerDetailsContent({
         humanTakeover={conversation.humanTakeover}
       />
 
-      <Separator />
-
-      <div>
-        <p className='text-foreground mb-1.5 text-sm font-medium'>Internal notes</p>
-        <p className='text-muted-foreground mb-2 text-xs'>
-          Internal notes will be enabled in a future update.
-        </p>
+      <section>
+        <SectionHeading title='Internal notes' />
         <Textarea
-          placeholder='Add an internal note (not visible to the guest)'
+          placeholder='Add an internal note (not visible to the customer)'
           rows={2}
           disabled
           className='min-h-16 text-sm'
         />
-        <Tooltip>
-          <TooltipTrigger
-            render={<Button type='button' size='sm' variant='outline' disabled className='mt-2' />}
-          >
-            <Icons.add className='size-3.5' aria-hidden='true' />
-            Add note
-          </TooltipTrigger>
-          <TooltipContent>Internal notes will be enabled in a future update</TooltipContent>
-        </Tooltip>
-      </div>
+        <p className='text-muted-foreground mt-2 text-xs'>
+          Internal notes will be enabled in a future update.
+        </p>
+      </section>
     </div>
   );
 }
@@ -257,7 +290,7 @@ export function CustomerDetailsPanel({
       className={cn('hidden h-full min-h-0 flex-col gap-0 overflow-hidden p-0 lg:flex', className)}
     >
       <div className='flex items-center justify-between border-b p-3'>
-        <h2 className='text-foreground text-sm font-semibold'>Customer details</h2>
+        <h2 className='text-foreground text-sm font-bold'>Customer details</h2>
         <Button
           type='button'
           variant='ghost'
