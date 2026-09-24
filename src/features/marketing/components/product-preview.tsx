@@ -26,7 +26,7 @@ export function ProductPreview() {
       {/* Sun disc behind the scene */}
       <div
         aria-hidden='true'
-        className='bg-lp-sun absolute -top-6 right-[-8%] -z-0 size-[78%] rounded-full opacity-90 lg:right-[-4%]'
+        className='bg-lp-blue-mid absolute -top-6 right-[-8%] -z-0 size-[78%] rounded-full opacity-90 lg:right-[-4%]'
       />
       <div
         aria-hidden='true'

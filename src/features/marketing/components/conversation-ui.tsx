@@ -18,7 +18,7 @@ export function VisitorBubble({
   return (
     <p
       className={cn(
-        'bg-lp-ink text-lp-paper ml-auto max-w-[85%] rounded-[20px] rounded-br-md px-4 py-2.5 text-[15px] leading-snug',
+        'bg-lp-blue ml-auto text-white max-w-[85%] rounded-[20px] rounded-br-md px-4 py-2.5 text-[15px] leading-snug',
         className
       )}
     >
@@ -54,7 +54,7 @@ export function AssistantBubble({
 export function WidgetFrame({
   name,
   initials,
-  accent = 'bg-lp-sun',
+  accent = 'bg-lp-blue-soft',
   children,
   className
 }: {
@@ -110,7 +110,7 @@ export type InboxTone = 'lead' | 'handoff' | 'unanswered';
 const TONE: Record<InboxTone, { label: string; className: string }> = {
   lead: { label: 'Lead captured', className: 'bg-lp-sage text-lp-sage-ink' },
   handoff: { label: 'Needs a person', className: 'bg-lp-coral-soft text-lp-coral' },
-  unanswered: { label: 'Unanswered question', className: 'bg-lp-sun-soft text-lp-ink' }
+  unanswered: { label: 'Unanswered question', className: 'bg-lp-blue-soft text-lp-blue-deep' }
 };
 
 export function InboxCard({

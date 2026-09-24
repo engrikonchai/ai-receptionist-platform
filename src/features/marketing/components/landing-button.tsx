@@ -15,9 +15,10 @@ const landingButtonVariants = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-lp-ink text-lp-paper shadow-lp-soft hover:bg-lp-ink-soft pr-3',
+        primary: 'bg-lp-blue text-white shadow-lp-soft hover:bg-lp-blue-deep pr-3',
         secondary: 'border-lp-ink/25 text-lp-ink hover:bg-lp-ink/5 border-2',
-        onYellow: 'bg-lp-ink text-lp-paper hover:bg-lp-ink-soft pr-3'
+        onBlue: 'text-lp-blue-deep hover:bg-lp-blue-soft bg-white pr-3',
+        onBlueOutline: 'border-2 border-white/60 text-white hover:bg-white/10'
       },
       fullWidthOnMobile: { true: 'w-full sm:w-auto' },
       size: { md: '', sm: 'min-h-10 pr-2 pl-5 text-sm' }
@@ -42,7 +43,7 @@ export function LandingButton({
   children,
   onClick
 }: LandingButtonProps) {
-  const withArrow = variant !== 'secondary';
+  const withArrow = variant !== 'secondary' && variant !== 'onBlueOutline';
   return (
     <Link
       href={href}
@@ -53,7 +54,10 @@ export function LandingButton({
       {withArrow ? (
         <span
           aria-hidden='true'
-          className='bg-lp-sun text-lp-ink flex size-7 items-center justify-center rounded-full transition-transform duration-200 group-hover:translate-x-0.5'
+          className={cn(
+            'flex size-7 items-center justify-center rounded-full transition-transform duration-200 group-hover:translate-x-0.5',
+            variant === 'onBlue' ? 'bg-lp-blue text-white' : 'bg-white text-lp-blue-deep'
+          )}
         >
           <Icons.arrowRight className='size-4' strokeWidth={2.5} />
         </span>

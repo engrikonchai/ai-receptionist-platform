@@ -76,14 +76,14 @@ function InstallFragment() {
     <div className='bg-lp-ink overflow-hidden rounded-2xl shadow-lp-soft'>
       <div className='flex items-center gap-1.5 px-4 pt-3.5' aria-hidden='true'>
         <span className='bg-lp-coral size-2.5 rounded-full' />
-        <span className='bg-lp-sun size-2.5 rounded-full' />
+        <span className='bg-lp-blue-mid size-2.5 rounded-full' />
         <span className='bg-lp-sage size-2.5 rounded-full' />
       </div>
       <pre className='text-lp-paper overflow-x-auto px-4 pt-3 pb-5 font-mono text-[13px] leading-relaxed'>
         <code>
-          <span className='text-lp-sun'>{'<script'}</span>
+          <span className='text-lp-blue-mid'>{'<script'}</span>
           {'\n  src="…/widget-loader.js"\n  data-widget-id="your-id"\n  async'}
-          <span className='text-lp-sun'>{'></script>'}</span>
+          <span className='text-lp-blue-mid'>{'></script>'}</span>
         </code>
       </pre>
     </div>
@@ -96,7 +96,7 @@ const STEPS = [
     description:
       'Add your hours, services, prices and policies as short answers. Edit them whenever things change.',
     visual: <KnowledgeFragment />,
-    tint: 'bg-lp-sun-soft'
+    tint: 'bg-lp-blue-soft'
   },
   {
     title: 'Choose how it sounds',
@@ -110,7 +110,7 @@ const STEPS = [
     description:
       'Match the widget to your brand, copy the snippet, and test it before it goes live.',
     visual: <InstallFragment />,
-    tint: 'bg-lp-sky'
+    tint: 'bg-lp-paper-deep'
   }
 ] as const;
 
@@ -121,7 +121,7 @@ export function HowItWorksSection() {
       className='mx-auto max-w-6xl scroll-mt-20 px-5 py-16 sm:px-8 lg:py-24'
     >
       <div className='max-w-2xl'>
-        <p className='text-lp-coral text-xs font-extrabold tracking-[0.14em] uppercase'>
+        <p className='text-lp-blue-deep text-xs font-extrabold tracking-[0.14em] uppercase'>
           How it works
         </p>
         <h2 className='lp-display mt-3 text-[34px] leading-[1.05] font-semibold text-balance sm:text-[48px]'>
@@ -149,7 +149,7 @@ export function HowItWorksSection() {
             <div className={cn(index % 2 === 1 && 'lg:order-2')}>
               <span
                 aria-hidden='true'
-                className='lp-display text-lp-sun mb-2 hidden text-[88px] leading-none font-semibold sm:block [-webkit-text-stroke:2px_var(--lp-ink)]'
+                className='lp-display text-lp-blue-soft mb-2 hidden text-[88px] leading-none font-semibold sm:block [-webkit-text-stroke:2px_var(--lp-blue)]'
               >
                 {index + 1}
               </span>

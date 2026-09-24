@@ -14,7 +14,7 @@ export function HeroSection() {
       <div className='grid items-center gap-14 lg:grid-cols-[1.02fr_1fr] lg:gap-10'>
         <div className='lp-rise'>
           <p className='bg-lp-card border-lp-line text-lp-ink shadow-lp-soft inline-flex items-center gap-2 rounded-full border px-4 py-1.5 text-[13px] font-bold'>
-            <Icons.sparkles className='text-lp-coral size-4' aria-hidden='true' />
+            <Icons.sparkles className='text-lp-blue size-4' aria-hidden='true' />
             An AI assistant for your website
           </p>
 

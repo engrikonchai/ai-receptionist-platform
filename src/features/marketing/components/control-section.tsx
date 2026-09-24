@@ -42,7 +42,7 @@ export function ControlSection() {
                 <div key={point.title} className='flex gap-4'>
                   <span
                     aria-hidden='true'
-                    className='bg-lp-ink text-lp-sun mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full'
+                    className='bg-lp-blue mt-0.5 text-white flex size-6 shrink-0 items-center justify-center rounded-full'
                   >
                     <Icons.check className='size-3.5' strokeWidth={3.5} />
                   </span>
@@ -87,7 +87,7 @@ export function ControlSection() {
                     <span
                       className={
                         index === 0
-                          ? 'bg-lp-ink text-lp-paper shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold'
+                          ? 'bg-lp-blue shrink-0 rounded-full px-3.5 py-1.5 text-xs font-bold text-white'
                           : 'border-lp-ink/25 text-lp-ink shrink-0 rounded-full border-2 px-3.5 py-1 text-xs font-bold'
                       }
                     >
@@ -99,7 +99,7 @@ export function ControlSection() {
             </div>
             <div
               aria-hidden='true'
-              className='bg-lp-sun text-lp-ink shadow-lp-soft absolute -bottom-5 -left-2 rotate-[-3deg] rounded-2xl px-4 py-2.5 text-sm font-extrabold sm:-left-6'
+              className='bg-lp-blue text-white shadow-lp-soft absolute -bottom-5 -left-2 rotate-[-3deg] rounded-2xl px-4 py-2.5 text-sm font-extrabold sm:-left-6'
             >
               Add it once — it’s answered for good.
             </div>

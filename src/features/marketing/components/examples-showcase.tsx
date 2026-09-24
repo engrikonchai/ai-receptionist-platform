@@ -63,8 +63,8 @@ const EXAMPLES: Example[] = [
       message: 'Do you cut keys for car fobs?',
       tones: ['unanswered']
     },
-    stage: 'bg-lp-sun-soft',
-    accent: 'bg-lp-sun',
+    stage: 'bg-lp-paper-deep',
+    accent: 'bg-lp-blue-soft',
     takeaway:
       'When there’s no matching answer, the question is kept for you so you can add one in a step.'
   },
@@ -174,7 +174,7 @@ export function ExamplesShowcase() {
               className={cn(
                 'shrink-0 snap-start rounded-full border-2 px-5 py-2.5 text-[15px] font-bold whitespace-nowrap transition-colors',
                 selected
-                  ? 'border-lp-ink bg-lp-ink text-lp-paper'
+                  ? 'border-lp-blue bg-lp-blue text-white'
                   : 'border-lp-line bg-lp-card text-lp-ink-soft hover:border-lp-ink/30 hover:text-lp-ink'
               )}
             >

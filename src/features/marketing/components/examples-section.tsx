@@ -4,7 +4,7 @@ export function ExamplesSection() {
   return (
     <section id='examples' className='mx-auto max-w-6xl scroll-mt-20 px-5 py-20 sm:px-8 lg:py-28'>
       <div className='mx-auto max-w-2xl text-center'>
-        <p className='text-lp-coral text-xs font-extrabold tracking-[0.14em] uppercase'>
+        <p className='text-lp-blue-deep text-xs font-extrabold tracking-[0.14em] uppercase'>
           Any kind of business
         </p>
         <h2 className='lp-display mt-3 text-[34px] leading-[1.05] font-semibold text-balance sm:text-[48px]'>
