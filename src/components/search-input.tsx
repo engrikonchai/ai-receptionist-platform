@@ -21,3 +21,19 @@ export default function SearchInput() {
     </div>
   );
 }
+
+/** Icon-only search trigger for narrow screens, where the wide search box is hidden. */
+export function SearchIconButton() {
+  const { query } = useKBar();
+  return (
+    <Button
+      variant='ghost'
+      size='icon'
+      aria-label='Search'
+      onClick={query.toggle}
+      className='text-muted-foreground lg:hidden'
+    >
+      <Icons.search className='size-5' aria-hidden='true' />
+    </Button>
+  );
+}

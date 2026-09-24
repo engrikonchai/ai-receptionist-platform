@@ -71,7 +71,7 @@ export function InboxView({ businessId }: { businessId: string }) {
     const sessionExpired = message === SESSION_EXPIRED_MESSAGE;
 
     return (
-      <div className='flex h-[calc(100dvh-5.5rem)] min-h-0 w-full min-w-0 items-center justify-center'>
+      <div className='flex h-[60dvh] min-h-0 w-full min-w-0 items-center justify-center'>
         <Empty>
           <EmptyMedia variant='icon'>
             <Icons.alertCircle aria-hidden='true' />
@@ -98,11 +98,19 @@ export function InboxView({ businessId }: { businessId: string }) {
   const activeConversation = conversations?.find((c) => c.id === selectedConversationId);
 
   return (
-    <div className='flex h-[calc(100dvh-5.5rem)] min-h-0 w-full min-w-0 gap-3 overflow-hidden'>
+    <div
+      className={cn(
+        'flex min-h-0 w-full min-w-0 gap-3 overflow-hidden',
+        mobileView === 'thread'
+          ? 'h-[calc(100dvh-3.5rem-env(safe-area-inset-top)-1rem)]'
+          : 'h-[calc(100dvh-3.5rem-env(safe-area-inset-top)-3.5rem-env(safe-area-inset-bottom)-1rem)]',
+        'md:h-[calc(100dvh-3.5rem-1.5rem)]'
+      )}
+    >
       <ConversationListPanel
         businessId={businessId}
         className={cn(
-          'min-w-0 w-full md:w-[300px] md:shrink-0 lg:w-[320px]',
+          'min-w-0 w-full md:w-[320px] md:shrink-0 lg:w-[350px]',
           mobileView === 'thread' ? 'hidden md:flex' : 'flex'
         )}
       />
@@ -110,7 +118,7 @@ export function InboxView({ businessId }: { businessId: string }) {
       <div className={cn('min-w-0 flex-1', mobileView === 'list' ? 'hidden md:flex' : 'flex')}>
         {isPending ? (
           <div
-            className='flex h-full w-full flex-col gap-3 rounded-xl border border-dashed p-3'
+            className='border-border flex h-full w-full flex-col gap-3 rounded-2xl border border-dashed p-3'
             aria-hidden='true'
           >
             <Skeleton className='h-10 w-1/2' />
@@ -125,7 +133,7 @@ export function InboxView({ businessId }: { businessId: string }) {
             onOpenCustomerDetails={() => setCustomerSheetOpen(true)}
           />
         ) : (
-          <div className='flex h-full w-full items-center justify-center rounded-xl border border-dashed'>
+          <div className='border-border flex h-full w-full items-center justify-center rounded-2xl border border-dashed'>
             <Empty>
               <EmptyMedia variant='icon'>
                 <Icons.chat aria-hidden='true' />
@@ -143,7 +151,7 @@ export function InboxView({ businessId }: { businessId: string }) {
         <CustomerDetailsPanel
           businessId={businessId}
           conversation={activeConversation}
-          className='w-[300px] shrink-0 lg:w-[320px]'
+          className='w-[300px] shrink-0 xl:w-[330px]'
         />
       )}
 

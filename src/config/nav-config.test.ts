@@ -3,8 +3,8 @@ import { Icons } from '@/components/icons';
 import { navGroups } from './nav-config';
 
 describe('nav-config — Agent item', () => {
-  it('links to /dashboard/agent, placed in Main near Knowledge and Widget, with a real registered icon', () => {
-    const mainGroup = navGroups.find((group) => group.label === 'Main');
+  it('links to /dashboard/agent, placed in the Assistant group near Knowledge and Widget, with a real registered icon', () => {
+    const mainGroup = navGroups.find((group) => group.label === 'Assistant');
     expect(mainGroup).toBeDefined();
 
     const items = mainGroup?.items ?? [];

@@ -1,8 +1,42 @@
 import { Icons } from '@/components/icons';
-import { Badge } from '@/components/ui/badge';
-import { cn } from '@/lib/utils';
-import { handoffStatusIndicatorLabel } from '../utils/format';
-import type { ConversationStatus, HandoffStatus } from '../api/types';
+import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
+import {
+  ATTENTION_LABEL,
+  conversationAttention,
+  handoffStatusIndicatorLabel,
+  type ConversationAttention
+} from '../utils/format';
+import type { ConversationListItem, ConversationStatus, HandoffStatus } from '../api/types';
+
+const ATTENTION_TONE: Record<ConversationAttention, StatusTone> = {
+  needs_you: 'attention',
+  with_you: 'info',
+  ai: 'neutral',
+  closed: 'neutral'
+};
+
+/**
+ * The single, primary state of a conversation — what the owner should
+ * do about it. Replaces the old trio of overlapping badges (status,
+ * who-replies, handoff) everywhere a quick scan matters.
+ */
+export function ConversationStateBadge({
+  conversation,
+  className
+}: {
+  conversation: Pick<ConversationListItem, 'status' | 'humanTakeover' | 'handoffStatus'>;
+  className?: string;
+}) {
+  const state = conversationAttention(conversation);
+  return (
+    <StatusPill tone={ATTENTION_TONE[state]} dot={state === 'needs_you'} className={className}>
+      {state === 'with_you' && <Icons.humanAgent className='size-3' aria-hidden='true' />}
+      {state === 'ai' && <Icons.aiAgent className='size-3' aria-hidden='true' />}
+      {state === 'closed' && <Icons.circleCheck className='size-3' aria-hidden='true' />}
+      {ATTENTION_LABEL[state]}
+    </StatusPill>
+  );
+}
 
 /** Conversation lifecycle: open, handed off, or closed. Always pairs an icon with a text label. */
 export function ConversationStatusBadge({
@@ -14,27 +48,25 @@ export function ConversationStatusBadge({
 }) {
   if (status === 'handed_off') {
     return (
-      <Badge variant='destructive' className={cn('gap-1 border-destructive/20', className)}>
+      <StatusPill tone='attention' className={className}>
         <Icons.warning className='size-3' aria-hidden='true' />
         Handed off
-      </Badge>
+      </StatusPill>
     );
   }
-
   if (status === 'closed') {
     return (
-      <Badge variant='outline' className={cn('text-muted-foreground gap-1', className)}>
+      <StatusPill tone='neutral' className={className}>
         <Icons.circleCheck className='size-3' aria-hidden='true' />
         Closed
-      </Badge>
+      </StatusPill>
     );
   }
-
   return (
-    <Badge variant='outline' className={cn('text-primary border-primary/30 gap-1', className)}>
+    <StatusPill tone='info' className={className}>
       <Icons.circle className='size-3' aria-hidden='true' />
       Open
-    </Badge>
+    </StatusPill>
   );
 }
 
@@ -46,20 +78,16 @@ export function HumanTakeoverBadge({
   humanTakeover: boolean;
   className?: string;
 }) {
-  if (humanTakeover) {
-    return (
-      <Badge variant='secondary' className={cn('gap-1', className)}>
-        <Icons.humanAgent className='size-3' aria-hidden='true' />
-        Human
-      </Badge>
-    );
-  }
-
-  return (
-    <Badge variant='outline' className={cn('text-muted-foreground gap-1', className)}>
+  return humanTakeover ? (
+    <StatusPill tone='info' className={className}>
+      <Icons.humanAgent className='size-3' aria-hidden='true' />
+      Human
+    </StatusPill>
+  ) : (
+    <StatusPill tone='neutral' className={className}>
       <Icons.aiAgent className='size-3' aria-hidden='true' />
       AI
-    </Badge>
+    </StatusPill>
   );
 }
 
@@ -85,12 +113,12 @@ export function HandoffStatusIndicator({
     status === 'new' ? Icons.warning : status === 'resolved' ? Icons.circleCheck : Icons.humanAgent;
 
   return (
-    <Badge
-      variant={isSettled ? 'outline' : status === 'new' ? 'destructive' : 'secondary'}
-      className={cn('gap-1', isSettled && 'text-muted-foreground', className)}
+    <StatusPill
+      tone={isSettled ? 'neutral' : status === 'new' ? 'attention' : 'info'}
+      className={className}
     >
       <Icon className='size-3' aria-hidden='true' />
       {label}
-    </Badge>
+    </StatusPill>
   );
 }

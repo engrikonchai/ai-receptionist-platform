@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
+import { Card } from '@/components/ui/card';
 import {
   Empty,
   EmptyContent,
@@ -43,7 +43,7 @@ function KnowledgeListSkeleton() {
   return (
     <div className='space-y-3' aria-hidden='true'>
       {Array.from({ length: 4 }).map((_, index) => (
-        <Card key={index} className='gap-3 p-4'>
+        <Card key={index} className='gap-3 rounded-2xl p-5'>
           <Skeleton className='h-4 w-24' />
           <Skeleton className='h-5 w-2/3' />
           <Skeleton className='h-4 w-1/3' />
@@ -116,25 +116,25 @@ export function KnowledgeView({
 
   return (
     <div className='space-y-4'>
-      <div className='flex flex-wrap items-center gap-4'>
-        <Card className='min-w-32 gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>Total items</p>
-            <p className='text-foreground text-xl font-semibold'>{isPending ? '—' : totalCount}</p>
-          </CardContent>
-        </Card>
-        <Card className='min-w-32 gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>Active items</p>
-            <p className='text-foreground text-xl font-semibold'>{isPending ? '—' : activeCount}</p>
-          </CardContent>
-        </Card>
+      <div className='bg-card ring-foreground/10 grid max-w-md grid-cols-2 gap-px overflow-hidden rounded-2xl ring-1 [&>div]:bg-card'>
+        <div className='px-5 py-4'>
+          <p className='text-muted-foreground text-xs font-semibold'>Total items</p>
+          <p className='font-display mt-1 text-[30px] leading-none font-semibold tabular-nums'>
+            {isPending ? '—' : totalCount}
+          </p>
+        </div>
+        <div className='px-5 py-4'>
+          <p className='text-muted-foreground text-xs font-semibold'>Active items</p>
+          <p className='font-display text-status-success mt-1 text-[30px] leading-none font-semibold tabular-nums'>
+            {isPending ? '—' : activeCount}
+          </p>
+        </div>
       </div>
 
       <div className='flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center'>
         <div className='relative flex-1 sm:min-w-56'>
           <Icons.search
-            className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2'
+            className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2'
             aria-hidden='true'
           />
           <label htmlFor='knowledge-search' className='sr-only'>
@@ -146,14 +146,16 @@ export function KnowledgeView({
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder='Search questions and answers'
-            className='pl-8'
+            className='bg-card h-10 pl-9'
             disabled={totalCount === 0}
           />
         </div>
 
         <Select value={category} onValueChange={(value) => setCategory(value ?? ALL_CATEGORIES)}>
           <SelectTrigger className='w-full sm:w-48' aria-label='Filter by category'>
-            <SelectValue placeholder='All categories' />
+            <SelectValue placeholder='All categories'>
+              {category === ALL_CATEGORIES ? 'All categories' : category}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL_CATEGORIES}>All categories</SelectItem>
@@ -168,7 +170,7 @@ export function KnowledgeView({
         <div
           role='group'
           aria-label='Filter by status'
-          className='flex flex-wrap items-center gap-1.5'
+          className='bg-secondary flex items-center gap-0.5 rounded-lg p-0.5'
         >
           {(
             [
@@ -182,10 +184,10 @@ export function KnowledgeView({
               type='button'
               aria-pressed={status === filter.value}
               onClick={() => setStatus(filter.value)}
-              className={`focus-visible:ring-ring focus-visible:ring-offset-background rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none ${
+              className={`focus-visible:ring-ring min-h-9 flex-1 touch-manipulation rounded-md px-3 text-xs font-bold transition-colors focus-visible:ring-2 focus-visible:outline-none ${
                 status === filter.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               }`}
             >
               {filter.label}

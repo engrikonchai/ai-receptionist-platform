@@ -65,7 +65,8 @@ export default async function InboxPage() {
   await queryClient.fetchQuery(conversationsOptions(activeBusinessId)).catch(() => {});
 
   return (
-    <div className='flex min-h-0 min-w-0 flex-1 px-4 py-2 md:px-6'>
+    <div className='flex min-h-0 min-w-0 flex-1 px-3 py-2 md:px-6 md:py-3'>
+      <h1 className='sr-only'>Inbox</h1>
       <HydrationBoundary state={dehydrate(queryClient)}>
         <InboxView businessId={activeBusinessId} />
       </HydrationBoundary>

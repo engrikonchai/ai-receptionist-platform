@@ -4,15 +4,13 @@ import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, type UseMutationResult } from '@tanstack/react-query';
 import { toast } from 'sonner';
 import { Icons } from '@/components/icons';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
-import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
-import { CHANNEL_LABEL, languageLabel } from '../utils/format';
+import { CHANNEL_LABEL, handoffStatusIndicatorLabel, languageLabel } from '../utils/format';
 import {
   conversationMessagesOptions,
   reopenConversationMutation,
@@ -22,11 +20,7 @@ import {
 } from '../api/queries';
 import type { ConversationActionResult, ConversationListItem } from '../api/types';
 import { ChannelIcon } from './channel-icon';
-import {
-  ConversationStatusBadge,
-  HandoffStatusIndicator,
-  HumanTakeoverBadge
-} from './status-badge';
+import { ConversationStateBadge } from './status-badge';
 import { MessageItem } from './message-item';
 import { Composer } from './composer';
 
@@ -38,6 +32,21 @@ function initialsFor(name: string) {
     .slice(0, 2)
     .join('')
     .toUpperCase();
+}
+
+function isNewDay(previousIso: string | undefined, currentIso: string): boolean {
+  if (!previousIso) return true;
+  return new Date(previousIso).toDateString() !== new Date(currentIso).toDateString();
+}
+
+function dayLabel(iso: string): string {
+  const date = new Date(iso);
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return 'Today';
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  if (date.toDateString() === yesterday.toDateString()) return 'Yesterday';
+  return date.toLocaleDateString('en-GB', { weekday: 'short', day: '2-digit', month: 'short' });
 }
 
 function MessageSkeleton() {
@@ -106,52 +115,68 @@ export function ActiveConversationPanel({
     <Card
       className={cn('flex h-full min-h-0 min-w-0 flex-col gap-0 overflow-hidden p-0', className)}
     >
-      <header className='flex flex-wrap items-center justify-between gap-2 border-b p-3'>
+      <header className='flex flex-col gap-3 border-b p-3 sm:px-4'>
         <div className='flex min-w-0 items-center gap-2.5'>
           <Button
             type='button'
             variant='ghost'
             size='icon'
-            className='md:hidden'
+            className='-ml-1 size-10 md:hidden'
             onClick={() => setMobileView('list')}
             aria-label='Back to conversation list'
           >
-            <Icons.arrowLeft className='size-4' />
+            <Icons.arrowLeft className='size-5' />
           </Button>
-          <Avatar>
-            <AvatarFallback className='bg-primary/10 text-primary text-sm font-semibold'>
-              {conversation.hasLeadName ? (
-                initialsFor(conversation.displayName)
-              ) : (
-                <Icons.user className='size-4' aria-hidden='true' />
-              )}
-            </AvatarFallback>
-          </Avatar>
-          <div className='min-w-0'>
-            <p className='text-foreground truncate text-sm font-semibold'>
-              {conversation.displayName}
-            </p>
-            <div className='text-muted-foreground flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs'>
+          <span
+            aria-hidden='true'
+            className='bg-secondary text-secondary-foreground flex size-10 shrink-0 items-center justify-center rounded-full text-sm font-extrabold'
+          >
+            {conversation.hasLeadName ? (
+              initialsFor(conversation.displayName)
+            ) : (
+              <Icons.user className='size-4' />
+            )}
+          </span>
+          <div className='min-w-0 flex-1'>
+            <div className='flex min-w-0 items-center gap-2'>
+              <h2 className='text-foreground truncate text-base leading-tight font-bold'>
+                {conversation.displayName}
+              </h2>
+              <ConversationStateBadge conversation={conversation} />
+            </div>
+            <div className='text-muted-foreground mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs'>
               <span className='inline-flex items-center gap-1'>
                 <ChannelIcon channel={conversation.channel} />
                 {CHANNEL_LABEL[conversation.channel]}
               </span>
               <span aria-hidden='true'>·</span>
               <span>{languageLabel(conversation.detectedLanguage)}</span>
+              {conversation.handoffStatus && (
+                <>
+                  <span aria-hidden='true'>·</span>
+                  <span>
+                    {handoffStatusIndicatorLabel(
+                      conversation.handoffStatus,
+                      conversation.humanTakeover
+                    )}
+                  </span>
+                </>
+              )}
             </div>
           </div>
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='size-10 shrink-0 lg:hidden'
+            onClick={onOpenCustomerDetails}
+            aria-label='Show customer details'
+          >
+            <Icons.info className='size-5' />
+          </Button>
         </div>
 
-        <div className='flex flex-wrap items-center gap-1.5'>
-          <ConversationStatusBadge status={conversation.status} />
-          <HumanTakeoverBadge humanTakeover={conversation.humanTakeover} />
-          {conversation.handoffStatus && (
-            <HandoffStatusIndicator
-              status={conversation.handoffStatus}
-              humanTakeover={conversation.humanTakeover}
-            />
-          )}
-
+        <div className='flex items-center gap-2 max-sm:[&>button]:flex-1'>
           {conversation.humanTakeover ? (
             <Button
               type='button'
@@ -166,7 +191,6 @@ export function ActiveConversationPanel({
           ) : (
             <Button
               type='button'
-              variant='outline'
               size='sm'
               disabled={anyActionPending}
               onClick={() =>
@@ -203,25 +227,12 @@ export function ActiveConversationPanel({
               Resolve
             </Button>
           )}
-
-          <Button
-            type='button'
-            variant='ghost'
-            size='icon'
-            className='lg:hidden'
-            onClick={onOpenCustomerDetails}
-            aria-label='Show customer details'
-          >
-            <Icons.info className='size-4' />
-          </Button>
         </div>
       </header>
 
-      <Separator />
-
       <div
         ref={scrollRef}
-        className='min-h-0 flex-1 space-y-4 overflow-y-auto p-3'
+        className='bg-background/60 min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain p-3 sm:p-5'
         aria-live='off'
         aria-label={`Message thread with ${conversation.displayName}`}
       >
@@ -272,8 +283,19 @@ export function ActiveConversationPanel({
           </Empty>
         )}
 
-        {messages.map((message) => (
-          <MessageItem key={message.id} message={message} />
+        {messages.map((message, index) => (
+          <div key={message.id} className='space-y-3'>
+            {isNewDay(messages[index - 1]?.createdAt, message.createdAt) && (
+              <div className='flex items-center gap-3 py-1' role='separator'>
+                <span className='bg-border h-px flex-1' />
+                <span className='text-muted-foreground text-[11px] font-bold tracking-wide uppercase'>
+                  {dayLabel(message.createdAt)}
+                </span>
+                <span className='bg-border h-px flex-1' />
+              </div>
+            )}
+            <MessageItem message={message} />
+          </div>
         ))}
       </div>
 

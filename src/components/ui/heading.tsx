@@ -18,14 +18,18 @@ export function Heading({ title, description, infoContent }: HeadingProps) {
           forces the whole shell wider than the viewport instead of
           ellipsizing as intended. */}
       <div className='flex min-w-0 items-center gap-2'>
-        <h2 className='truncate text-2xl font-extrabold tracking-tight sm:text-3xl'>{title}</h2>
+        <h1 className='font-display truncate text-[28px] leading-tight font-semibold sm:text-[34px]'>
+          {title}
+        </h1>
         {infoContent && (
           <div className='shrink-0 pt-1'>
             <InfoButton content={infoContent} />
           </div>
         )}
       </div>
-      <p className='text-muted-foreground text-sm wrap-break-word'>{description}</p>
+      <p className='text-muted-foreground mt-1 max-w-2xl text-[15px] leading-relaxed wrap-break-word'>
+        {description}
+      </p>
     </div>
   );
 }

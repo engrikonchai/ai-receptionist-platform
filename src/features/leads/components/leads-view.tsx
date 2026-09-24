@@ -5,7 +5,6 @@ import Link from 'next/link';
 import { useQuery } from '@tanstack/react-query';
 import { Icons } from '@/components/icons';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
 import {
   Empty,
   EmptyContent,
@@ -22,13 +21,14 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select';
+import { cn } from '@/lib/utils';
 import { leadsListOptions } from '../api/queries';
 import { SESSION_EXPIRED_MESSAGE } from '../api/types';
 import type { LeadListItem, LeadSource, LeadStatus } from '../api/types';
 import { LEAD_SOURCE_LABEL, LEAD_STATUS_LABEL } from '../utils/format';
 import { useLeadsUiStore } from '../utils/store';
 import { LeadDetailsSheet } from './lead-details-sheet';
-import { LeadRow } from './lead-row';
+import { LEAD_ROW_GRID, LeadRow } from './lead-row';
 
 type StatusFilter = 'all' | LeadStatus;
 type SourceFilter = 'all' | LeadSource;
@@ -124,41 +124,31 @@ export function LeadsView({ businessId }: { businessId: string }) {
 
   return (
     <div className='space-y-4'>
-      <div className='grid grid-cols-2 gap-3 sm:grid-cols-4'>
-        <Card className='gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>Total leads</p>
-            <p className='text-foreground text-xl font-semibold'>{isPending ? '—' : stats.total}</p>
-          </CardContent>
-        </Card>
-        <Card className='gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>New</p>
-            <p className='text-foreground text-xl font-semibold'>{isPending ? '—' : stats.new}</p>
-          </CardContent>
-        </Card>
-        <Card className='gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>Contacted</p>
-            <p className='text-foreground text-xl font-semibold'>
-              {isPending ? '—' : stats.contacted}
+      <div className='bg-card ring-foreground/10 grid grid-cols-2 gap-px overflow-hidden rounded-2xl ring-1 sm:grid-cols-4 [&>div]:bg-card'>
+        {[
+          { label: 'Total leads', value: stats.total, tone: '' },
+          { label: 'New', value: stats.new, tone: stats.new > 0 ? 'text-status-attention' : '' },
+          { label: 'Contacted', value: stats.contacted, tone: '' },
+          { label: 'Resolved', value: stats.resolved, tone: '' }
+        ].map((stat) => (
+          <div key={stat.label} className='px-5 py-4'>
+            <p className='text-muted-foreground text-xs font-semibold'>{stat.label}</p>
+            <p
+              className={cn(
+                'font-display mt-1 text-[30px] leading-none font-semibold tabular-nums',
+                stat.tone
+              )}
+            >
+              {isPending ? '—' : stat.value}
             </p>
-          </CardContent>
-        </Card>
-        <Card className='gap-1 px-4 py-3'>
-          <CardContent className='p-0'>
-            <p className='text-muted-foreground text-xs'>Resolved</p>
-            <p className='text-foreground text-xl font-semibold'>
-              {isPending ? '—' : stats.resolved}
-            </p>
-          </CardContent>
-        </Card>
+          </div>
+        ))}
       </div>
 
       <div className='flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center'>
         <div className='relative flex-1 sm:min-w-56'>
           <Icons.search
-            className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2'
+            className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2'
             aria-hidden='true'
           />
           <label htmlFor='leads-search' className='sr-only'>
@@ -170,7 +160,7 @@ export function LeadsView({ businessId }: { businessId: string }) {
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder='Search by name or reference'
-            className='pl-8'
+            className='bg-card h-10 pl-9'
             disabled={stats.total === 0}
           />
         </div>
@@ -180,7 +170,9 @@ export function LeadsView({ businessId }: { businessId: string }) {
           onValueChange={(value) => setStatus((value as StatusFilter) ?? 'all')}
         >
           <SelectTrigger className='w-full sm:w-44' aria-label='Filter by status'>
-            <SelectValue placeholder='All statuses' />
+            <SelectValue placeholder='All statuses'>
+              {status === 'all' ? 'All statuses' : LEAD_STATUS_LABEL[status]}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {STATUS_OPTIONS.map((value) => (
@@ -196,7 +188,9 @@ export function LeadsView({ businessId }: { businessId: string }) {
           onValueChange={(value) => setSource((value as SourceFilter) ?? 'all')}
         >
           <SelectTrigger className='w-full sm:w-44' aria-label='Filter by source'>
-            <SelectValue placeholder='All sources' />
+            <SelectValue placeholder='All sources'>
+              {source === 'all' ? 'All sources' : LEAD_SOURCE_LABEL[source]}
+            </SelectValue>
           </SelectTrigger>
           <SelectContent>
             {SOURCE_OPTIONS.map((value) => (
@@ -253,12 +247,27 @@ export function LeadsView({ businessId }: { businessId: string }) {
       )}
 
       {!isPending && filtered.length > 0 && (
-        <div className='space-y-1' role='list' aria-label='Leads'>
-          {filtered.map((lead) => (
-            <div key={lead.id} role='listitem'>
-              <LeadRow lead={lead} onSelect={openLead} />
-            </div>
-          ))}
+        <div className='bg-card ring-foreground/10 rounded-2xl p-2 ring-1'>
+          <div
+            aria-hidden='true'
+            className={cn(
+              'text-muted-foreground px-3 pt-2 pb-2 text-[11px] font-extrabold tracking-[0.1em] uppercase max-md:hidden',
+              LEAD_ROW_GRID
+            )}
+          >
+            <span>Lead</span>
+            <span>Contact</span>
+            <span>Source</span>
+            <span>Status</span>
+            <span className='text-right'>Received</span>
+          </div>
+          <div className='divide-border divide-y md:border-t' role='list' aria-label='Leads'>
+            {filtered.map((lead) => (
+              <div key={lead.id} role='listitem' className='py-0.5'>
+                <LeadRow lead={lead} onSelect={openLead} />
+              </div>
+            ))}
+          </div>
         </div>
       )}
 

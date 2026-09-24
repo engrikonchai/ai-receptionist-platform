@@ -1,10 +1,16 @@
 import { Icons } from '@/components/icons';
-import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { Badge } from '@/components/ui/badge';
+import { StatusPill, type StatusTone } from '@/components/ui/status-pill';
 import { cn } from '@/lib/utils';
 import { LEAD_SOURCE_LABEL, LEAD_STATUS_LABEL, formatTimestamp } from '../utils/format';
-import type { LeadListItem } from '../api/types';
+import type { LeadListItem, LeadStatus } from '../api/types';
 import { LeadHandoffBadge } from './handoff-badge';
+
+const LEAD_TONE: Record<LeadStatus, StatusTone> = {
+  new: 'attention',
+  contacted: 'info',
+  confirmed: 'success',
+  lost: 'neutral'
+};
 
 function initialsFor(name: string) {
   return name
@@ -16,6 +22,16 @@ function initialsFor(name: string) {
     .toUpperCase();
 }
 
+/**
+ * One lead, laid out once: a two-line card on a phone (name + status
+ * over contact + time) and a scannable table row from `md` up
+ * (name · contact · source · status · received). The same five cells are
+ * placed differently per breakpoint, so every value is in the DOM exactly
+ * once. See LeadsView for the matching column header.
+ */
+export const LEAD_ROW_GRID =
+  'grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 gap-y-1 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1.3fr)_5.5rem_13rem_6.5rem] md:items-center md:gap-4';
+
 export function LeadRow({
   lead,
   onSelect
@@ -23,45 +39,61 @@ export function LeadRow({
   lead: LeadListItem;
   onSelect: (id: string) => void;
 }) {
+  const isNew = lead.status === 'new';
   return (
     <button
       type='button'
       onClick={() => onSelect(lead.id)}
       aria-label={`Lead ${lead.displayName}`}
       className={cn(
-        'focus-visible:ring-ring focus-visible:ring-offset-background hover:bg-muted/60 w-full rounded-lg border border-transparent px-2.5 py-2.5 text-left transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none'
+        'focus-visible:ring-ring hover:bg-muted/70 active:bg-muted w-full touch-manipulation rounded-xl px-3 py-3 text-left transition-colors focus-visible:ring-2 focus-visible:outline-none',
+        LEAD_ROW_GRID
       )}
     >
-      <div className='flex items-start gap-2.5'>
-        <Avatar className='mt-0.5 shrink-0'>
-          <AvatarFallback className='bg-primary/10 text-primary text-xs font-semibold'>
-            {initialsFor(lead.displayName) || <Icons.user className='size-4' aria-hidden='true' />}
-          </AvatarFallback>
-        </Avatar>
+      <span className='col-start-1 row-start-1 flex min-w-0 items-center gap-3 md:col-auto md:row-auto'>
+        <span
+          aria-hidden='true'
+          className={cn(
+            'flex size-9 shrink-0 items-center justify-center rounded-full text-xs font-extrabold',
+            isNew
+              ? 'bg-status-attention-soft text-status-attention'
+              : 'bg-secondary text-secondary-foreground'
+          )}
+        >
+          {initialsFor(lead.displayName) || <Icons.user className='size-4' />}
+        </span>
+        <span className='min-w-0 flex-1'>
+          <span className='text-foreground block truncate text-sm font-bold'>
+            {lead.displayName}
+          </span>
+          <span className='text-muted-foreground hidden truncate text-xs md:block'>
+            {lead.reference}
+          </span>
+        </span>
+      </span>
 
-        <div className='min-w-0 flex-1 space-y-1'>
-          <div className='flex items-center justify-between gap-2'>
-            <p className='text-foreground truncate text-sm font-semibold'>{lead.displayName}</p>
-            <span className='text-muted-foreground shrink-0 text-[0.7rem] tabular-nums'>
-              {formatTimestamp(lead.createdAt)}
-            </span>
-          </div>
+      <span className='text-muted-foreground col-span-2 col-start-1 row-start-2 truncate pl-12 text-[13px] md:col-span-1 md:col-auto md:row-auto md:pl-0 md:text-sm'>
+        {lead.maskedContact}
+      </span>
 
-          <p className='text-muted-foreground truncate text-xs'>{lead.maskedContact}</p>
+      <span className='text-muted-foreground hidden text-sm md:block'>
+        {LEAD_SOURCE_LABEL[lead.source]}
+      </span>
 
-          <div className='flex flex-wrap items-center justify-between gap-1.5 pt-0.5'>
-            <span className='text-muted-foreground text-[0.7rem]'>
-              {LEAD_SOURCE_LABEL[lead.source]}
-            </span>
-            <div className='flex min-w-0 flex-wrap items-center justify-end gap-1.5'>
-              {lead.handoffStatus && (
-                <LeadHandoffBadge status={lead.handoffStatus} humanTakeover={lead.humanTakeover} />
-              )}
-              <Badge variant='outline'>{LEAD_STATUS_LABEL[lead.status]}</Badge>
-            </div>
-          </div>
-        </div>
-      </div>
+      <span className='col-span-2 col-start-1 row-start-3 mt-1 flex flex-wrap items-center gap-1.5 pl-12 md:col-span-1 md:col-auto md:row-auto md:mt-0 md:pl-0'>
+        <StatusPill tone={LEAD_TONE[lead.status]}>{LEAD_STATUS_LABEL[lead.status]}</StatusPill>
+        {lead.handoffStatus && (
+          <LeadHandoffBadge status={lead.handoffStatus} humanTakeover={lead.humanTakeover} />
+        )}
+      </span>
+
+      <time
+        suppressHydrationWarning
+        dateTime={lead.createdAt}
+        className='text-muted-foreground col-start-2 row-start-1 text-right text-xs tabular-nums md:col-auto md:row-auto'
+      >
+        {formatTimestamp(lead.createdAt)}
+      </time>
     </button>
   );
 }

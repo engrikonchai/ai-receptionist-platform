@@ -1,5 +1,6 @@
 import { cookies } from 'next/headers';
 import PageContainer from '@/components/layout/page-container';
+import { Icons } from '@/components/icons';
 import { PlaceholderPage } from '@/components/layout/placeholder-page';
 import {
   ACTIVE_BUSINESS_COOKIE,
@@ -10,9 +11,19 @@ import type { BusinessSubscriptionRow, WidgetSettingsRow } from '@/lib/supabase/
 import { getPaddleEnvironment } from '@/lib/paddle/client';
 import { SetupChecklist } from '@/features/onboarding/components/setup-checklist';
 import { computeSetupProgress } from '@/features/onboarding/utils/setup-progress';
-import { OperationalSummary } from '@/features/overview/components/operational-summary';
-import { QuickActions } from '@/features/overview/components/quick-actions';
 import { BillingSummary } from '@/features/overview/components/billing-summary';
+import {
+  ActivityPanel,
+  AssistantPanel,
+  AttentionQueue,
+  NewLeadsPanel,
+  type ActivityDay
+} from '@/features/overview/components/overview-panels';
+import { fetchConversations } from '@/features/inbox/api/service';
+import { conversationAttention } from '@/features/inbox/utils/format';
+import { fetchLeads } from '@/features/leads/api/service';
+import { Button } from '@/components/ui/button';
+import Link from 'next/link';
 
 export default async function OverviewPage() {
   const ctx = await loadOwnerContext();
@@ -58,8 +69,6 @@ export default async function OverviewPage() {
   const [
     { data: widgetSettingsRow },
     { count: activeKnowledgeItemCount },
-    { count: newLeadCount, error: newLeadCountError },
-    { count: pendingHandoffCount, error: pendingHandoffCountError },
     { data: subscriptionRow }
   ] = activeBusiness
     ? await Promise.all([
@@ -73,16 +82,6 @@ export default async function OverviewPage() {
           .select('id', { count: 'exact', head: true })
           .eq('business_id', activeBusiness.id)
           .eq('is_active', true),
-        ctx.supabase
-          .from('leads')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', activeBusiness.id)
-          .eq('status', 'new'),
-        ctx.supabase
-          .from('handoffs')
-          .select('id', { count: 'exact', head: true })
-          .eq('business_id', activeBusiness.id)
-          .eq('status', 'new'),
         paddleConfigured
           ? ctx.supabase
               .from('business_subscriptions')
@@ -91,13 +90,50 @@ export default async function OverviewPage() {
               .maybeSingle()
           : Promise.resolve({ data: null })
       ])
-    : [
-        { data: null },
-        { count: 0 },
-        { count: 0, error: null },
-        { count: 0, error: null },
-        { data: null }
-      ];
+    : [{ data: null }, { count: 0 }, { data: null }];
+
+  // The same RLS-scoped, business-verified reads the Inbox and Leads pages
+  // use (latest 50 conversations / latest leads) — no new queries or
+  // tables. A failure here only empties the panels; it never breaks Overview.
+  const [conversationsResult, leadsResult] = activeBusiness
+    ? await Promise.all([
+        fetchConversations(activeBusiness.id).catch(() => null),
+        fetchLeads(activeBusiness.id).catch(() => null)
+      ])
+    : [[], []];
+  const activityLoadFailed = conversationsResult === null || leadsResult === null;
+  const conversations = conversationsResult ?? [];
+  const leads = leadsResult ?? [];
+
+  const needsYou = conversations
+    .filter((c) => conversationAttention(c) === 'needs_you')
+    .toSorted(
+      (a, b) =>
+        new Date(b.latestMessageAt ?? b.updatedAt).getTime() -
+        new Date(a.latestMessageAt ?? a.updatedAt).getTime()
+    );
+  const newLeads = leads.filter((lead) => lead.status === 'new');
+
+  const DAY_MS = 24 * 60 * 60 * 1000;
+  const todayStart = new Date();
+  todayStart.setHours(0, 0, 0, 0);
+  const days: ActivityDay[] = Array.from({ length: 7 }, (_, i) => {
+    const start = todayStart.getTime() - (6 - i) * DAY_MS;
+    return {
+      label: new Date(start).toLocaleDateString('en-GB', { weekday: 'short' }),
+      count: conversations.filter((c) => {
+        const at = new Date(c.latestMessageAt ?? c.updatedAt).getTime();
+        return at >= start && at < start + DAY_MS;
+      }).length,
+      isToday: i === 6
+    };
+  });
+  const weekStart = todayStart.getTime() - 6 * DAY_MS;
+  const weekConversations = conversations.filter(
+    (c) => new Date(c.latestMessageAt ?? c.updatedAt).getTime() >= weekStart
+  );
+  const assistantOnly = weekConversations.filter((c) => !c.handoffStatus && !c.humanTakeover);
+  const weekLeadCount = leads.filter((l) => new Date(l.createdAt).getTime() >= weekStart).length;
 
   const widget = widgetSettingsRow as WidgetSettingsRow | null;
   const subscription = subscriptionRow as Pick<
@@ -121,36 +157,68 @@ export default async function OverviewPage() {
       })
     : null;
 
+  const firstName = displayName.split(/[\s@]/)[0];
+
   return (
     <PageContainer
-      pageTitle={`Welcome, ${displayName}`}
+      pageTitle={`Welcome back, ${firstName}`}
       pageDescription={
         activeBusiness
-          ? `You're managing ${activeBusiness.name}.`
+          ? `Here’s what’s happening at ${activeBusiness.name}.`
           : 'Your AI receptionist workspace.'
       }
+      pageHeaderAction={
+        activeBusiness ? (
+          <Button render={<Link href='/dashboard/inbox' aria-label='Open Inbox' />}>
+            <Icons.chat className='size-4' aria-hidden='true' />
+            Open Inbox
+          </Button>
+        ) : undefined
+      }
     >
-      <div className='flex flex-col gap-6'>
-        {setupProgress && <SetupChecklist progress={setupProgress} />}
+      <div className='flex flex-col gap-5'>
+        {setupProgress && !setupProgress.isComplete && <SetupChecklist progress={setupProgress} />}
 
         {activeBusiness && (
-          <OperationalSummary
-            newLeadCount={newLeadCount ?? 0}
-            pendingHandoffCount={pendingHandoffCount ?? 0}
-            hasError={Boolean(newLeadCountError || pendingHandoffCountError)}
-          />
-        )}
-
-        {activeBusiness && (
-          <div className='grid grid-cols-1 gap-6 lg:grid-cols-3'>
-            <div className='lg:col-span-2'>
-              <QuickActions
-                activeKnowledgeItemCount={activeKnowledgeItemCount ?? 0}
-                widgetEnabled={widget?.widget_enabled ?? false}
-              />
+          <>
+            {activityLoadFailed && (
+              <p
+                role='alert'
+                className='text-status-danger bg-status-danger-soft rounded-xl px-4 py-3 text-sm font-semibold'
+              >
+                Some activity could not be loaded. Refresh to try again.
+              </p>
+            )}
+            <div className='grid gap-5 lg:grid-cols-5'>
+              <div className='lg:col-span-3'>
+                <AttentionQueue items={needsYou.slice(0, 5)} total={needsYou.length} />
+              </div>
+              <div className='lg:col-span-2'>
+                <NewLeadsPanel leads={newLeads.slice(0, 5)} total={newLeads.length} />
+              </div>
             </div>
-            {paddleConfigured && <BillingSummary subscription={subscription} />}
-          </div>
+            <div className='grid gap-5 lg:grid-cols-3'>
+              <ActivityPanel
+                days={days}
+                conversationCount={weekConversations.length}
+                assistantOnlyPercent={
+                  weekConversations.length > 0
+                    ? Math.round((assistantOnly.length / weekConversations.length) * 100)
+                    : null
+                }
+                leadCount={weekLeadCount}
+                handoffCount={weekConversations.length - assistantOnly.length}
+              />
+              <div className='flex flex-col gap-5'>
+                <AssistantPanel
+                  widgetEnabled={widget?.widget_enabled ?? false}
+                  installed={widget?.installation_confirmed ?? false}
+                  activeKnowledgeCount={activeKnowledgeItemCount ?? 0}
+                />
+                {paddleConfigured && <BillingSummary subscription={subscription} />}
+              </div>
+            </div>
+          </>
         )}
       </div>
     </PageContainer>

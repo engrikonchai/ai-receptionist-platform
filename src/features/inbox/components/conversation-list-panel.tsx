@@ -11,7 +11,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Empty, EmptyDescription, EmptyMedia, EmptyTitle } from '@/components/ui/empty';
 import { cn } from '@/lib/utils';
 import { useInboxStore } from '../utils/store';
-import { CHANNEL_LABEL } from '../utils/format';
+import { CHANNEL_LABEL, conversationAttention } from '../utils/format';
+import { StatusPill } from '@/components/ui/status-pill';
 import { conversationsOptions } from '../api/queries';
 import { SESSION_EXPIRED_MESSAGE } from '../api/types';
 import type { ConversationChannel, ConversationListItem, InboxStatusFilter } from '../api/types';
@@ -92,19 +93,40 @@ export function ConversationListPanel({
     });
   }, [conversations, searchQuery, statusFilter, channelFilters]);
 
+  const needsYouCount = useMemo(
+    () => (conversations ?? []).filter((c) => conversationAttention(c) === 'needs_you').length,
+    [conversations]
+  );
+  // Channel filters only earn their space once the data actually spans
+  // more than one channel (Instagram/WhatsApp can't have conversations
+  // until those channels ship — see the Channels page).
+  const availableChannels = useMemo(
+    () => CHANNELS.filter((channel) => (conversations ?? []).some((c) => c.channel === channel)),
+    [conversations]
+  );
+
   const errorMessage = error instanceof Error ? error.message : 'Please try again.';
   const isSessionExpired = isError && errorMessage === SESSION_EXPIRED_MESSAGE;
 
   return (
     <Card className={cn('flex h-full min-h-0 flex-col gap-0 overflow-hidden p-0', className)}>
-      <div className='flex flex-col gap-3 border-b p-3'>
+      <div className='flex flex-col gap-3 border-b p-3 pb-3.5'>
         <div className='flex items-center justify-between gap-2'>
-          <h2 className='text-foreground text-base font-semibold'>Inbox</h2>
-          <span className='text-muted-foreground text-xs'>
-            {conversations
-              ? `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`
-              : ''}
-          </span>
+          <h2 className='font-display text-foreground text-[22px] leading-none font-semibold'>
+            Inbox
+          </h2>
+          <div className='flex items-center gap-2'>
+            {needsYouCount > 0 && (
+              <StatusPill tone='attention' dot>
+                {needsYouCount} need{needsYouCount === 1 ? 's' : ''} you
+              </StatusPill>
+            )}
+            <span className='text-muted-foreground text-xs'>
+              {conversations
+                ? `${conversations.length} conversation${conversations.length === 1 ? '' : 's'}`
+                : ''}
+            </span>
+          </div>
         </div>
 
         <label htmlFor='inbox-search' className='sr-only'>
@@ -112,7 +134,7 @@ export function ConversationListPanel({
         </label>
         <div className='relative'>
           <Icons.search
-            className='text-muted-foreground pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2'
+            className='text-muted-foreground pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2'
             aria-hidden='true'
           />
           <Input
@@ -121,7 +143,7 @@ export function ConversationListPanel({
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder='Search conversations'
-            className='pl-8'
+            className='bg-background h-10 pl-9'
             disabled={!conversations || conversations.length === 0}
           />
         </div>
@@ -129,7 +151,7 @@ export function ConversationListPanel({
         <div
           role='group'
           aria-label='Filter by status'
-          className='flex flex-wrap items-center gap-1.5'
+          className='bg-secondary flex items-center gap-0.5 rounded-lg p-0.5'
         >
           {STATUS_FILTERS.map((filter) => (
             <button
@@ -138,10 +160,10 @@ export function ConversationListPanel({
               aria-pressed={statusFilter === filter.value}
               onClick={() => setStatusFilter(filter.value)}
               className={cn(
-                'focus-visible:ring-ring focus-visible:ring-offset-background rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
+                'focus-visible:ring-ring min-h-8 flex-1 touch-manipulation rounded-md px-2 text-xs font-bold whitespace-nowrap transition-colors focus-visible:ring-2 focus-visible:outline-none',
                 statusFilter === filter.value
-                  ? 'border-primary bg-primary text-primary-foreground'
-                  : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
+                  ? 'bg-card text-foreground shadow-sm'
+                  : 'text-muted-foreground hover:text-foreground'
               )}
             >
               {filter.label}
@@ -149,36 +171,38 @@ export function ConversationListPanel({
           ))}
         </div>
 
-        <div
-          role='group'
-          aria-label='Filter by channel'
-          className='flex flex-wrap items-center gap-1.5'
-        >
-          {CHANNELS.map((channel) => {
-            const active = channelFilters.includes(channel);
-            return (
-              <button
-                key={channel}
-                type='button'
-                aria-pressed={active}
-                onClick={() => toggleChannelFilter(channel)}
-                className={cn(
-                  'focus-visible:ring-ring focus-visible:ring-offset-background inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-none',
-                  active
-                    ? 'border-primary/40 bg-primary/10 text-primary'
-                    : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
-                )}
-              >
-                <ChannelIcon channel={channel} className='size-3.5' />
-                {CHANNEL_LABEL[channel]}
-              </button>
-            );
-          })}
-        </div>
+        {availableChannels.length > 1 && (
+          <div
+            role='group'
+            aria-label='Filter by channel'
+            className='flex flex-wrap items-center gap-1.5'
+          >
+            {availableChannels.map((channel) => {
+              const active = channelFilters.includes(channel);
+              return (
+                <button
+                  key={channel}
+                  type='button'
+                  aria-pressed={active}
+                  onClick={() => toggleChannelFilter(channel)}
+                  className={cn(
+                    'focus-visible:ring-ring inline-flex min-h-8 items-center gap-1.5 rounded-full border px-2.5 text-xs font-bold transition-colors focus-visible:ring-2 focus-visible:outline-none',
+                    active
+                      ? 'border-primary/40 bg-accent text-accent-foreground'
+                      : 'border-border text-muted-foreground hover:text-foreground hover:bg-muted'
+                  )}
+                >
+                  <ChannelIcon channel={channel} className='size-3.5' />
+                  {CHANNEL_LABEL[channel]}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       <div
-        className='min-h-0 flex-1 space-y-1 overflow-y-auto p-2'
+        className='min-h-0 flex-1 space-y-0.5 overflow-y-auto overscroll-contain p-2'
         role='list'
         aria-label='Conversations'
       >
