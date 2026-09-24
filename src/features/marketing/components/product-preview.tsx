@@ -1,28 +1,17 @@
 import { Icons } from '@/components/icons';
+import { AssistantBubble, InboxCard, VisitorBubble, WidgetFrame } from './conversation-ui';
 
 /**
- * The approved six-step product story (Landing Page.dc.html's hero
- * visual), rebuilt as static markup — fictional content only, no
- * network calls, no auth, no real widget/Inbox code reused. A clean
- * boundary Milestone 2 can replace or extend with the real
- * multi-industry interactive demo without touching the rest of the
- * landing page.
- *
- * Steps: 1 widget opens · 2 visitor asks a question · 3 reply comes
- * from the Knowledge Base · 4 lead details are captured · 5 handed to
- * a person · 6 conversation appears in the Inbox.
+ * The hero's product scene: what the customer sees (the website chat)
+ * and what the owner receives (the Inbox entry), as static illustrative
+ * markup. Fictional business and person — labelled as an example.
  */
-function StepBadge({ n, tone = 'light' }: { n: number; tone?: 'light' | 'solid' }) {
+function SideLabel({ children, className }: { children: React.ReactNode; className?: string }) {
   return (
     <span
-      aria-hidden='true'
-      className={
-        tone === 'solid'
-          ? 'bg-daylight-indigo inline-flex size-5.5 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold text-white'
-          : 'bg-daylight-indigo-tint text-daylight-indigo inline-flex size-5.5 shrink-0 items-center justify-center rounded-full text-[11px] font-extrabold'
-      }
+      className={`bg-lp-card text-lp-ink border-lp-line shadow-lp-soft inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-extrabold ${className ?? ''}`}
     >
-      {n}
+      {children}
     </span>
   );
 }
@@ -30,97 +19,61 @@ function StepBadge({ n, tone = 'light' }: { n: number; tone?: 'light' | 'solid' 
 export function ProductPreview() {
   return (
     <div
-      aria-label='Example product preview: how a conversation moves from the website widget to your Inbox — not a live conversation'
-      className='flex flex-col gap-3.5'
+      role='img'
+      aria-label='Example product preview: a visitor chats on a business website and the conversation arrives in the owner Inbox as a lead. Not a live conversation.'
+      className='relative mx-auto w-full max-w-[440px] lg:max-w-none'
     >
-      <div className='rounded-daylight-card shadow-daylight-lg overflow-hidden bg-white'>
-        <div className='bg-daylight-indigo flex items-center gap-3 px-5 py-4'>
-          <StepBadge n={1} tone='light' />
-          <div className='text-daylight-indigo flex size-8.5 items-center justify-center rounded-[11px] bg-white text-[13px] font-extrabold'>
-            NS
-          </div>
-          <div>
-            <p className='text-[15px] font-bold text-white'>Northside Studio</p>
-            <p className='text-daylight-on-indigo-muted text-[12px]'>
-              Website chat · Example conversation
-            </p>
-          </div>
-        </div>
+      {/* Sun disc behind the scene */}
+      <div
+        aria-hidden='true'
+        className='bg-lp-sun absolute -top-6 right-[-8%] -z-0 size-[78%] rounded-full opacity-90 lg:right-[-4%]'
+      />
+      <div
+        aria-hidden='true'
+        className='bg-lp-coral-soft absolute bottom-10 -left-6 -z-0 size-24 rounded-full'
+      />
 
-        <div className='flex flex-col gap-3 px-5 py-5'>
-          <div className='flex items-start gap-3'>
-            <StepBadge n={2} />
-            <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-sm rounded-bl-2xl bg-daylight-indigo px-4 py-2.5 text-sm leading-relaxed text-white ltr:ml-auto rtl:mr-auto'>
-              Are you open on Saturdays?
-            </p>
-          </div>
+      <div className='relative z-10' aria-hidden='true'>
+        <SideLabel className='lp-rise mb-3 ml-1'>
+          <Icons.chat className='size-3.5' />
+          What your customer sees
+        </SideLabel>
 
-          <div className='flex items-start gap-3'>
-            <StepBadge n={3} />
-            <div className='flex max-w-90 flex-col gap-1.5'>
-              <p className='bg-daylight-surface-muted text-daylight-ink rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm px-4 py-2.5 text-sm leading-relaxed'>
-                Yes — Saturdays from 9:00 to 14:00. Walk-ins are welcome, but booking ahead is
-                recommended.
-              </p>
-              <span className='text-daylight-muted text-xs font-semibold'>
-                Answered from Knowledge Base · Opening hours
-              </span>
-            </div>
-          </div>
+        <WidgetFrame
+          name='Fernhill Studio'
+          initials='FS'
+          className='lp-rise [--lp-delay:120ms] lg:w-[400px]'
+        >
+          <VisitorBubble className='lp-rise [--lp-delay:350ms]'>
+            Are you open on Saturdays?
+          </VisitorBubble>
+          <AssistantBubble source='Opening hours' className='lp-rise [--lp-delay:750ms]'>
+            Yes — Saturdays from 9:00 to 14:00. Walk-ins are welcome.
+          </AssistantBubble>
+          <VisitorBubble className='lp-rise [--lp-delay:1150ms]'>
+            Could someone send me a quote for a group of 12? I&apos;m Maya, maya.chen@mail.com
+          </VisitorBubble>
+          <AssistantBubble className='lp-rise [--lp-delay:1550ms]'>
+            Thanks, Maya. I&apos;ve passed this to the team — a person will reply here shortly.
+          </AssistantBubble>
+        </WidgetFrame>
 
-          <div className='flex items-start gap-3'>
-            <span aria-hidden='true' className='size-5.5 shrink-0' />
-            <p className='rounded-tl-2xl rounded-tr-2xl rounded-br-sm rounded-bl-2xl bg-daylight-indigo px-4 py-2.5 text-sm leading-relaxed text-white ltr:ml-auto rtl:mr-auto'>
-              Could someone send me a quote for a group of 12? I&apos;m Maya — maya.chen@mail.com
-            </p>
-          </div>
-
-          <div className='flex items-center gap-3'>
-            <StepBadge n={4} />
-            <p className='bg-daylight-success-tint text-daylight-success rounded-daylight-control flex flex-wrap items-center gap-2 px-3.5 py-2.5 text-[13px] font-semibold'>
-              <span className='font-extrabold'>Lead captured</span>
-              <span>Maya Chen · maya.chen@mail.com · Group quote</span>
-            </p>
-          </div>
-
-          <div className='flex items-center gap-3'>
-            <StepBadge n={5} />
-            <p className='bg-daylight-surface-muted text-daylight-ink rounded-tl-2xl rounded-tr-2xl rounded-br-2xl rounded-bl-sm px-4 py-2.5 text-sm leading-relaxed'>
-              Thanks, Maya. I&apos;ve passed this to the team — a person will reply here shortly.
-            </p>
-          </div>
+        <div className='relative mt-5 lg:absolute lg:-right-2 lg:-bottom-[13.5rem] lg:mt-0 lg:w-[330px] xl:-right-10'>
+          <SideLabel className='mb-3 ml-auto flex w-fit'>
+            <Icons.galleryVerticalEnd className='size-3.5' />
+            What you receive
+          </SideLabel>
+          <InboxCard
+            who='Maya Chen'
+            initials='MC'
+            meta='maya.chen@mail.com'
+            message='Could someone send me a quote for a group of 12?'
+            tones={['lead', 'handoff']}
+            className='lp-rise lp-bob [--lp-delay:1900ms] [--lp-tilt:1.5deg] rotate-[1.5deg] sm:mx-6 lg:mx-0'
+          />
         </div>
       </div>
-
-      <div className='rounded-daylight-card shadow-daylight-md flex items-start gap-3.5 bg-white p-5.5'>
-        <StepBadge n={6} tone='solid' />
-        <div className='min-w-0 flex-1'>
-          <div className='flex items-center gap-2.5'>
-            <span className='text-daylight-muted text-xs font-bold tracking-[0.12em] uppercase'>
-              Your Inbox
-            </span>
-            <span className='text-daylight-muted ml-auto text-xs'>just now</span>
-          </div>
-          <div className='mt-3 flex items-center gap-2.5'>
-            <div className='bg-daylight-indigo-tint text-daylight-indigo flex size-8.5 items-center justify-center rounded-[11px] text-xs font-extrabold'>
-              MC
-            </div>
-            <p className='text-daylight-ink text-[15px] font-bold'>Maya Chen</p>
-            <div className='ml-auto flex flex-wrap gap-1.5'>
-              <span className='bg-daylight-success-tint text-daylight-success rounded-full px-3 py-1.5 text-xs font-bold'>
-                Lead captured
-              </span>
-              <span className='bg-daylight-danger-tint text-daylight-danger rounded-full px-3 py-1.5 text-xs font-bold'>
-                Handed off
-              </span>
-            </div>
-          </div>
-          <p className='font-daylight-serif text-daylight-ink mt-3 text-base leading-relaxed'>
-            &ldquo;Could someone send me a quote for a group of 12?&rdquo;
-          </p>
-        </div>
-      </div>
-      <p className='text-daylight-muted flex items-center gap-1.5 text-xs font-semibold'>
+      <p className='text-lp-muted relative z-10 mt-4 flex items-center gap-1.5 text-xs font-semibold lg:absolute lg:-bottom-[15rem] lg:left-1 lg:max-w-[220px]'>
         <Icons.info className='size-3.5' aria-hidden='true' />
         Example conversation for illustration — not a live chat.
       </p>

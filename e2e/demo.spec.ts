@@ -287,10 +287,10 @@ test.describe('/demo — public interactive demo', () => {
 });
 
 test.describe('/ — landing CTA navigates to /demo', () => {
-  test('every "See how it works" button links to /demo', async ({ page }) => {
+  test('every "Try the demo" button links to /demo', async ({ page }) => {
     await page.goto('/');
-    const ctas = page.getByRole('link', { name: 'See how it works' });
-    await expect(ctas).toHaveCount(2);
+    const ctas = page.getByRole('link', { name: 'Try the demo' });
+    await expect(ctas).toHaveCount(3);
     const hrefs = await ctas.evaluateAll((els) =>
       els.map((el) => (el as HTMLAnchorElement).getAttribute('href'))
     );

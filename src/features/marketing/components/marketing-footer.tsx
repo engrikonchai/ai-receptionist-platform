@@ -1,43 +1,38 @@
-import { Icons } from '@/components/icons';
+import Link from 'next/link';
+import { LandingLogo } from './landing-logo';
 
-/**
- * The three "PRODUCT" items below are plain descriptive text, not
- * links — the approved export shows them as a static label list with
- * no href, and none of them maps to a single dedicated on-page anchor,
- * so rendering them as `<a>` tags would risk exactly the "decorative
- * dead link" this milestone must avoid. Real navigation lives only in
- * the header (see nav-links.ts).
- */
-const PRODUCT_ITEMS = ['Chat widget', 'Inbox', 'Knowledge Base'];
+const FOOTER_LINKS = [
+  { href: '/demo', label: 'Try the demo' },
+  { href: '/signup', label: 'Get started' },
+  { href: '/login', label: 'Sign in' }
+] as const;
 
 export function MarketingFooter() {
   const year = new Date().getFullYear();
 
   return (
-    <footer className='bg-daylight-navy-deep px-5 py-12 sm:px-8 sm:py-16 lg:px-12'>
-      <div className='mx-auto grid max-w-7xl gap-10 sm:grid-cols-[1.6fr_1fr]'>
-        <div>
-          <span className='inline-flex items-center gap-2'>
-            <Icons.logo className='text-daylight-indigo size-6' aria-hidden='true' />
-            <span className='text-lg font-extrabold text-white'>Platform</span>
-          </span>
-          <p className='text-daylight-muted mt-3.5 max-w-70 text-sm leading-relaxed'>
-            Website chat that answers customers, captures leads and brings in a person when it
-            matters.
+    <footer className='bg-lp-paper-deep px-5 py-12 sm:px-8 sm:py-14'>
+      <div className='mx-auto flex max-w-6xl flex-col gap-8 sm:flex-row sm:items-start sm:justify-between'>
+        <div className='max-w-xs'>
+          <LandingLogo />
+          <p className='text-lp-ink-soft mt-4 text-sm leading-relaxed'>
+            An AI assistant that answers your customers on your website, saves their details, and
+            brings you in when it matters.
           </p>
         </div>
-        <div className='flex flex-col gap-2.5'>
-          <span className='text-daylight-on-navy-faint text-xs font-bold tracking-[0.12em] uppercase'>
-            Product
-          </span>
-          {PRODUCT_ITEMS.map((item) => (
-            <span key={item} className='text-daylight-on-navy-body text-sm'>
-              {item}
-            </span>
+        <nav aria-label='Footer' className='flex flex-col gap-2 sm:items-end'>
+          {FOOTER_LINKS.map((link) => (
+            <Link
+              key={link.href}
+              href={link.href}
+              className='text-lp-ink hover:text-lp-ink-soft text-[15px] font-semibold underline-offset-4 hover:underline'
+            >
+              {link.label}
+            </Link>
           ))}
-        </div>
+        </nav>
       </div>
-      <div className='border-daylight-navy-panel text-daylight-on-navy-faint mx-auto mt-10 max-w-7xl border-t pt-5 text-sm'>
+      <div className='border-lp-line text-lp-muted mx-auto mt-10 max-w-6xl border-t pt-5 text-sm'>
         © {year} Platform
       </div>
     </footer>

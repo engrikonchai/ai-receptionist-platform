@@ -20,7 +20,7 @@ test.describe('/ — Daylight public landing page', () => {
     const response = await page.goto('/');
     expect(response?.ok()).toBe(true);
     await expect(page.getByRole('heading', { level: 1 })).toContainText(
-      'Every customer gets an answer.'
+      'Answer every customer question'
     );
   });
 
@@ -63,7 +63,7 @@ test.describe('/ — Daylight public landing page', () => {
 
   test('the product preview is visible and clearly marked as an example', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByText('Your Inbox', { exact: true })).toBeVisible();
+    await expect(page.getByText('Your Inbox', { exact: true }).first()).toBeVisible();
     await expect(page.getByText(/Example conversation/i).first()).toBeVisible();
   });
 
@@ -106,7 +106,7 @@ test.describe('/ — Daylight public landing page', () => {
 
     const dialog = page.getByRole('dialog');
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByRole('link', { name: 'Product' })).toBeVisible();
+    await expect(dialog.getByRole('link', { name: 'Examples' })).toBeVisible();
 
     await page.keyboard.press('Escape');
     await expect(dialog).toBeHidden();

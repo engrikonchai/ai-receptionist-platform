@@ -3,10 +3,10 @@ import { isSupabaseConfigured } from '@/lib/supabase/env';
 import { loadOwnerContext } from '@/lib/supabase/owner-context';
 import { DEFAULT_REDIRECT_PATH } from '@/lib/safe-redirect';
 import { HeroSection } from '@/features/marketing/components/hero-section';
-import { CapabilitiesSection } from '@/features/marketing/components/capabilities-section';
-import { AnyBusinessSection } from '@/features/marketing/components/any-business-section';
+import { QuestionMarquee } from '@/features/marketing/components/question-marquee';
+import { ExamplesSection } from '@/features/marketing/components/examples-section';
 import { HowItWorksSection } from '@/features/marketing/components/how-it-works-section';
-import { TrustSection } from '@/features/marketing/components/trust-section';
+import { ControlSection } from '@/features/marketing/components/control-section';
 import { FinalCtaSection } from '@/features/marketing/components/final-cta-section';
 
 export const dynamic = 'force-dynamic';
@@ -32,10 +32,10 @@ export default async function LandingPage() {
   return (
     <>
       <HeroSection />
-      <CapabilitiesSection />
-      <AnyBusinessSection />
+      <QuestionMarquee />
+      <ExamplesSection />
       <HowItWorksSection />
-      <TrustSection />
+      <ControlSection />
       <FinalCtaSection />
     </>
   );

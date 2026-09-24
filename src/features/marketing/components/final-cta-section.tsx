@@ -1,21 +1,34 @@
-import { MarketingButton } from './marketing-button';
+import { LandingButton } from './landing-button';
 
 export function FinalCtaSection() {
   return (
-    <section className='bg-daylight-indigo px-5 py-16 text-center sm:px-8 sm:py-20 lg:px-12 lg:py-28'>
-      <h2 className='mx-auto max-w-3xl text-[34px] leading-[1.1] font-extrabold tracking-[-0.038em] text-white sm:text-[44px] lg:text-[62px] lg:leading-[1.05]'>
-        Give every visitor an answer.
-      </h2>
-      <p className='font-daylight-serif mx-auto mt-3.5 max-w-md text-base leading-relaxed text-daylight-on-indigo-muted sm:mt-5.5 sm:text-lg lg:text-[19px]'>
-        Add what you know, install the widget, and see every conversation in one Inbox.
-      </p>
-      <div className='mx-auto mt-6 flex max-w-xs flex-col justify-center gap-2.5 sm:mt-9 sm:max-w-none sm:flex-row sm:gap-3'>
-        <MarketingButton href='/signup' variant='primary-on-navy' fullWidthOnMobile>
-          Get started
-        </MarketingButton>
-        <MarketingButton href='/demo' variant='secondary-on-navy' fullWidthOnMobile>
-          See how it works
-        </MarketingButton>
+    <section className='px-3 pt-10 pb-16 sm:px-6 lg:pt-16 lg:pb-24'>
+      <div className='bg-lp-sun relative mx-auto max-w-6xl overflow-hidden rounded-[36px] px-6 py-16 text-center sm:rounded-[48px] sm:px-12 lg:py-24'>
+        <div
+          aria-hidden='true'
+          className='bg-lp-sun-soft absolute -top-24 -left-16 size-72 rounded-full'
+        />
+        <div
+          aria-hidden='true'
+          className='bg-lp-coral-soft absolute -right-20 -bottom-28 size-80 rounded-full'
+        />
+        <div className='relative'>
+          <h2 className='lp-display mx-auto max-w-3xl text-[38px] leading-[1.04] font-semibold text-balance sm:text-[56px] lg:text-[64px]'>
+            Give every visitor an answer.
+          </h2>
+          <p className='text-lp-ink/80 mx-auto mt-5 max-w-lg text-[17px] leading-relaxed text-pretty'>
+            Add what you know, paste one snippet into your site, and watch conversations arrive in
+            your Inbox.
+          </p>
+          <div className='mx-auto mt-9 flex max-w-xs flex-col justify-center gap-3 sm:max-w-none sm:flex-row'>
+            <LandingButton href='/signup' variant='onYellow' fullWidthOnMobile>
+              Get started
+            </LandingButton>
+            <LandingButton href='/demo' variant='secondary' fullWidthOnMobile>
+              Try the demo
+            </LandingButton>
+          </div>
+        </div>
       </div>
     </section>
   );
