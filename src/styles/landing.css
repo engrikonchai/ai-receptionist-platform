@@ -1,0 +1,164 @@
+/**
+ * "Sunroom" — the public landing page's own visual layer.
+ *
+ * Scoped to `.landing` (applied alongside `.daylight-marketing` on the
+ * landing layout's root). It never overrides a `--daylight-*` token,
+ * because /demo, /login and /signup still consume those; it only adds
+ * `--lp-*` tokens and the `lp-*` utilities generated from them. Same
+ * scoping rule as daylight.css: outside a `.landing` ancestor these
+ * utilities resolve to nothing, so they can never restyle the dashboard.
+ */
+.landing {
+  --lp-paper: #fbf6ee;
+  --lp-paper-deep: #f3ead9;
+  --lp-card: #ffffff;
+  --lp-ink: #1f1a15;
+  --lp-ink-soft: #564d43;
+  --lp-muted: #6f665b;
+  --lp-line: #e8dfcf;
+  --lp-blue: #4263c7;
+  --lp-blue-deep: #2f4a9e;
+  --lp-blue-mid: #b9c8f0;
+  --lp-blue-soft: #dfe6f8;
+  --lp-coral: #ef5b34;
+  --lp-coral-soft: #ffe3d8;
+  --lp-coral-ink: #a63a14;
+  --lp-sage: #dcead5;
+  --lp-sage-ink: #2b5a37;
+  --lp-sky: #dbeaf7;
+  --lp-sky-ink: #1f4e79;
+  --lp-lilac: #e9e1f6;
+  --lp-lilac-ink: #4b3a82;
+  --lp-focus: #2f4a9e;
+
+  --lp-shadow-card: 0 1px 0 rgba(31, 26, 21, 0.04), 0 18px 40px -18px rgba(66, 43, 12, 0.28);
+  --lp-shadow-soft: 0 1px 0 rgba(31, 26, 21, 0.04), 0 10px 24px -14px rgba(66, 43, 12, 0.22);
+
+  @theme inline {
+    --color-lp-paper: var(--lp-paper);
+    --color-lp-paper-deep: var(--lp-paper-deep);
+    --color-lp-card: var(--lp-card);
+    --color-lp-ink: var(--lp-ink);
+    --color-lp-ink-soft: var(--lp-ink-soft);
+    --color-lp-muted: var(--lp-muted);
+    --color-lp-line: var(--lp-line);
+    --color-lp-blue: var(--lp-blue);
+    --color-lp-blue-deep: var(--lp-blue-deep);
+    --color-lp-blue-mid: var(--lp-blue-mid);
+    --color-lp-blue-soft: var(--lp-blue-soft);
+    --color-lp-coral: var(--lp-coral);
+    --color-lp-coral-soft: var(--lp-coral-soft);
+    --color-lp-coral-ink: var(--lp-coral-ink);
+    --color-lp-sage: var(--lp-sage);
+    --color-lp-sage-ink: var(--lp-sage-ink);
+    --color-lp-sky: var(--lp-sky);
+    --color-lp-sky-ink: var(--lp-sky-ink);
+    --color-lp-lilac: var(--lp-lilac);
+    --color-lp-lilac-ink: var(--lp-lilac-ink);
+
+    --font-lp-display: var(--font-fraunces), Georgia, serif;
+    --font-lp-sans: var(--font-manrope), sans-serif;
+
+    --shadow-lp-card: var(--lp-shadow-card);
+    --shadow-lp-soft: var(--lp-shadow-soft);
+  }
+
+  background-color: var(--lp-paper);
+  color: var(--lp-ink);
+  font-family: var(--font-lp-sans);
+  color-scheme: light;
+}
+
+/* Display type: Fraunces at a soft, warm setting. */
+.landing .lp-display {
+  font-family: var(--font-fraunces), Georgia, serif;
+  font-optical-sizing: auto;
+  font-variation-settings: 'SOFT' 60;
+  letter-spacing: -0.02em;
+}
+
+/* Marker-pen underline for the one or two words per heading that matter. */
+.landing .lp-mark {
+  background: linear-gradient(transparent 60%, var(--lp-blue-mid) 60% 90%, transparent 90%);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+  padding: 0 0.08em;
+}
+
+.landing :focus-visible {
+  outline: 2px solid var(--lp-focus);
+  outline-offset: 3px;
+}
+
+/* The focus ring must stay visible on the solid-blue closing panel. */
+.landing .lp-on-blue :focus-visible {
+  outline-color: #ffffff;
+}
+
+@keyframes lp-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes lp-bob {
+  0%,
+  100% {
+    transform: translateY(0) rotate(var(--lp-tilt, 0deg));
+  }
+  50% {
+    transform: translateY(-6px) rotate(var(--lp-tilt, 0deg));
+  }
+}
+
+@keyframes lp-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
+  }
+}
+
+@keyframes lp-marquee {
+  to {
+    transform: translateX(-50%);
+  }
+}
+
+.landing .lp-rise {
+  animation: lp-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: var(--lp-delay, 0ms);
+}
+
+.landing .lp-bob {
+  animation: lp-bob 7s ease-in-out infinite;
+}
+
+.landing .lp-marquee-track {
+  animation: lp-marquee 60s linear infinite;
+}
+
+.landing .lp-marquee:hover .lp-marquee-track {
+  animation-play-state: paused;
+}
+
+.landing .lp-dot {
+  animation: lp-dot 1.2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .landing .lp-rise,
+  .landing .lp-bob,
+  .landing .lp-marquee-track,
+  .landing .lp-dot {
+    animation: none;
+  }
+}

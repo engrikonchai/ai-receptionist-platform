@@ -16,6 +16,9 @@
    above. */
 @import './daylight.css';
 
+/* The public landing page's own scoped layer — see that file's header. */
+@import './landing.css';
+
 /* Scoped to `.daylight-dashboard` only — see that file's own header
    comment. Overrides the same shadcn variable names `daylight.css`
    never touches, so this and `daylight.css` can never collide. */

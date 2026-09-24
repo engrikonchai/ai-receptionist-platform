@@ -10,26 +10,22 @@ import {
   SheetTitle,
   SheetTrigger
 } from '@/components/ui/sheet';
-import { MarketingButton } from './marketing-button';
+import { LandingButton } from './landing-button';
+import { LandingLogo } from './landing-logo';
 import { NAV_LINKS } from './nav-links';
 
 /**
- * Full-screen dark disclosure panel for narrow viewports — built on the
- * shared `Sheet` primitive (Base UI Dialog under the hood: real focus
- * trap, Escape-to-close, and a portal) with every visual class replaced
- * by Daylight tokens instead of the dashboard's shadcn ones. Closes
- * itself on a link click so the browser's own anchor-scroll behavior
- * runs against the now-closed page, not through an overlay.
+ * Full-screen disclosure panel for narrow viewports — built on the shared
+ * `Sheet` primitive (Base UI Dialog: real focus trap, Escape-to-close, a
+ * portal). It closes itself on a link click so the anchor scroll runs
+ * against the closed page rather than through an overlay.
  */
 export function MobileNav() {
   const [open, setOpen] = useState(false);
-  // Renders the Sheet's portal inside `.daylight-marketing` (see
-  // (marketing)/layout.tsx) rather than Base UI's default
-  // `document.body` target, which sits outside that scope and would
-  // silently strip every daylight-* class from the portaled panel.
-  // `document` doesn't exist during SSR, hence the guard; on the
-  // client it resolves synchronously since hydration attaches to
-  // already-server-rendered DOM.
+  // Renders the Sheet's portal inside `.daylight-marketing`/`.landing`
+  // (see (marketing)/layout.tsx) rather than `document.body`, which sits
+  // outside that scope and would strip every token class from the panel.
+  // `document` doesn't exist during SSR, hence the guard.
   const [portalContainer] = useState<HTMLElement | null>(() =>
     typeof document === 'undefined' ? null : document.getElementById('daylight-marketing-root')
   );
@@ -38,7 +34,7 @@ export function MobileNav() {
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger
         aria-label='Open menu'
-        className='text-daylight-ink focus-visible:outline-daylight-focus inline-flex size-11 items-center justify-center rounded-daylight-control focus-visible:outline-2 focus-visible:outline-offset-2 md:hidden'
+        className='text-lp-ink hover:bg-lp-ink/5 inline-flex size-11 items-center justify-center rounded-full md:hidden'
       >
         <Icons.menu className='size-6' aria-hidden='true' />
       </SheetTrigger>
@@ -46,49 +42,47 @@ export function MobileNav() {
         side='right'
         showCloseButton={false}
         container={portalContainer}
-        className='bg-daylight-navy-deep flex w-full flex-col gap-0 border-none p-6 sm:max-w-full'
+        className='bg-lp-paper flex w-full flex-col gap-0 border-none p-5 sm:max-w-full'
       >
         <SheetTitle className='sr-only'>Menu</SheetTitle>
         <SheetDescription className='sr-only'>Site navigation and account actions</SheetDescription>
 
         <div className='flex items-center justify-between'>
-          <span className='inline-flex items-center gap-2'>
-            <Icons.logo className='text-daylight-indigo size-6' aria-hidden='true' />
-            <span className='text-lg font-extrabold text-white'>Platform</span>
-          </span>
+          <LandingLogo />
           <SheetClose
             aria-label='Close menu'
-            className='focus-visible:outline-daylight-focus inline-flex size-11 items-center justify-center rounded-daylight-control text-white focus-visible:outline-2 focus-visible:outline-offset-2'
+            className='text-lp-ink hover:bg-lp-ink/5 inline-flex size-11 items-center justify-center rounded-full'
           >
             <Icons.close className='size-6' aria-hidden='true' />
           </SheetClose>
         </div>
 
-        <nav aria-label='Main' className='mt-9 flex flex-col'>
+        <nav aria-label='Main' className='mt-10 flex flex-col'>
           {NAV_LINKS.map((link) => (
             <a
               key={link.href}
               href={link.href}
               onClick={() => setOpen(false)}
-              className='text-daylight-on-navy-body border-daylight-navy-panel focus-visible:outline-daylight-focus border-b py-4 text-3xl font-extrabold tracking-tight focus-visible:outline-2 focus-visible:-outline-offset-2'
+              className='lp-display border-lp-line text-lp-ink flex items-center justify-between border-b py-5 text-[34px] leading-none font-semibold'
             >
               {link.label}
+              <Icons.arrowRight className='text-lp-muted size-6' aria-hidden='true' />
             </a>
           ))}
         </nav>
 
-        <div className='mt-auto flex flex-col gap-2.5 pt-8'>
-          <MarketingButton href='/signup' fullWidthOnMobile onClick={() => setOpen(false)}>
+        <div className='mt-auto flex flex-col gap-3 pt-8'>
+          <LandingButton href='/signup' fullWidthOnMobile onClick={() => setOpen(false)}>
             Get started
-          </MarketingButton>
-          <MarketingButton
+          </LandingButton>
+          <LandingButton
             href='/login'
-            variant='secondary-on-navy'
+            variant='secondary'
             fullWidthOnMobile
             onClick={() => setOpen(false)}
           >
             Sign in
-          </MarketingButton>
+          </LandingButton>
         </div>
       </SheetContent>
     </Sheet>

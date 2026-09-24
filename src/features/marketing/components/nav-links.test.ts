@@ -2,15 +2,15 @@ import { describe, expect, it } from 'vitest';
 import { NAV_LINKS } from './nav-links';
 
 describe('NAV_LINKS', () => {
-  it('has exactly the three real, working anchors this milestone specifies', () => {
+  it('has exactly the three real, working anchors the landing page exposes', () => {
     expect(NAV_LINKS).toEqual([
-      { href: '#capabilities', label: 'Product' },
+      { href: '#examples', label: 'Examples' },
       { href: '#how-it-works', label: 'How it works' },
-      { href: '#product-preview', label: 'Demo' }
+      { href: '#control', label: 'Control' }
     ]);
   });
 
-  it('never includes the obsolete "Help" item from the raw design export', () => {
+  it('never includes an item for a page that does not exist', () => {
     const labels: readonly string[] = NAV_LINKS.map((link) => link.label);
     expect(labels.includes('Help')).toBe(false);
   });
